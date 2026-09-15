@@ -21,12 +21,12 @@ export default function JobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [price, setPrice] = useState("");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [successJobId, setSuccessJobId] = useState<number | null>(null);
+  const [submittedJobIds, setSubmittedJobIds] = useState<number[]>([]);
 
   async function loadJobs() {
     const supabase = createClient();
@@ -63,7 +63,23 @@ export default function JobsPage() {
       return;
     }
 
-    setJobs((data as unknown as Job[]) ?? []);
+    const jobList = (data as unknown as Job[]) ?? [];
+    setJobs(jobList);
+
+    const jobIds = jobList.map((job) => job.id);
+
+    if (jobIds.length > 0) {
+      const { data: offerData } = await supabase
+        .from("offers")
+        .select("job_id")
+        .eq("provider_id", user.id)
+        .in("job_id", jobIds);
+
+      setSubmittedJobIds(
+        (offerData ?? []).map((offer) => offer.job_id),
+      );
+    }
+
     setLoading(false);
   }
 
@@ -107,6 +123,9 @@ export default function JobsPage() {
     }
 
     setSuccessJobId(jobId);
+    setSubmittedJobIds((current) =>
+      current.includes(jobId) ? current : [...current, jobId],
+    );
     setSelectedJobId(null);
     setPrice("");
     setMessage("");
@@ -140,7 +159,6 @@ export default function JobsPage() {
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-12">
-      {/* HEADER */}
       <div className="mb-10">
         <p className="text-sm font-medium text-zinc-500">
           Provider Paneli
@@ -155,14 +173,12 @@ export default function JobsPage() {
         </p>
       </div>
 
-      {/* ERROR */}
       {error && (
         <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
 
-      {/* EMPTY */}
       {jobs.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-zinc-300 p-12 text-center">
           <h2 className="text-lg font-medium">
@@ -181,7 +197,6 @@ export default function JobsPage() {
               key={job.id}
               className="rounded-2xl border border-zinc-200 bg-white p-6 transition hover:border-zinc-300"
             >
-              {/* JOB HEADER */}
               <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <div className="mb-3 flex flex-wrap gap-2">
@@ -203,7 +218,6 @@ export default function JobsPage() {
                   </p>
                 </div>
 
-                {/* BUDGET */}
                 <div className="shrink-0 rounded-xl bg-zinc-50 px-5 py-4 sm:min-w-32">
                   <p className="text-xs text-zinc-500">
                     Müşteri bütçesi
@@ -217,7 +231,6 @@ export default function JobsPage() {
                 </div>
               </div>
 
-              {/* JOB DETAILS */}
               <div className="mt-6 flex flex-wrap gap-x-8 gap-y-4 border-t border-zinc-100 pt-5">
                 <div>
                   <p className="text-xs text-zinc-400">Konum</p>
@@ -230,8 +243,13 @@ export default function JobsPage() {
                   <p className="text-xs text-zinc-400">
                     Çalışma şekli
                   </p>
+
                   <p className="mt-1 text-sm font-medium">
-                    {job.location_type}
+                    {job.location_type === "remote"
+                      ? "Uzaktan"
+                      : job.location_type === "on_site"
+                        ? "Yerinde"
+                        : "Hibrit"}
                   </p>
                 </div>
 
@@ -240,6 +258,7 @@ export default function JobsPage() {
                     <p className="text-xs text-zinc-400">
                       Son tarih
                     </p>
+
                     <p className="mt-1 text-sm font-medium">
                       {new Date(job.deadline).toLocaleDateString(
                         "tr-TR",
@@ -249,11 +268,14 @@ export default function JobsPage() {
                 )}
               </div>
 
-              {/* ACTION */}
               <div className="mt-6 border-t border-zinc-100 pt-5">
                 {successJobId === job.id ? (
                   <div className="rounded-xl bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
                     ✓ Teklifin başarıyla gönderildi.
+                  </div>
+                ) : submittedJobIds.includes(job.id) ? (
+                  <div className="rounded-xl bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-900">
+                    ✓ Bu işe teklif verdin.
                   </div>
                 ) : selectedJobId === job.id ? (
                   <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-5">
@@ -263,8 +285,7 @@ export default function JobsPage() {
                       </h3>
 
                       <p className="mt-1 text-sm text-zinc-500">
-                        Fiyatını ve müşteriye iletmek istediğin mesajı
-                        yaz.
+                        Fiyatını ve müşteriye iletmek istediğin mesajı yaz.
                       </p>
                     </div>
 
@@ -320,7 +341,9 @@ export default function JobsPage() {
                         disabled={sending}
                         className="rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
                       >
-                        {sending ? "Gönderiliyor..." : "Teklifi Gönder"}
+                        {sending
+                          ? "Gönderiliyor..."
+                          : "Teklifi Gönder"}
                       </button>
                     </div>
                   </div>

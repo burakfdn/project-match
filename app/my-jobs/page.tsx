@@ -12,12 +12,14 @@ type Job = {
   location_type: string;
   status: string;
   category: {
+    deadline: string | null;
     name: string;
   } | null;
 };
 
 type Offer = {
   id: number;
+  job_id: number;
   price: number;
   message: string | null;
   status: string;
@@ -26,9 +28,34 @@ type Offer = {
     bio: string | null;
     experience_years: number;
     city: string | null;
+    profile: {
+      full_name: string | null;
+    } | null;
   } | null;
 };
+function getStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    open: "Açık",
+    closed: "Kapandı",
+    completed: "Tamamlandı",
+    cancelled: "İptal edildi",
+    pending: "Bekliyor",
+    accepted: "Kabul edildi",
+    rejected: "Reddedildi",
+  };
 
+  return labels[status] ?? status;
+}
+
+function getLocationLabel(locationType: string) {
+  const labels: Record<string, string> = {
+    remote: "Uzaktan",
+    on_site: "Yerinde",
+    hybrid: "Hibrit",
+  };
+
+  return labels[locationType] ?? locationType;
+}
 export default function MyJobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [offers, setOffers] = useState<Record<number, Offer[]>>({});
@@ -46,9 +73,10 @@ export default function MyJobsPage() {
       return;
     }
 
-    const { data: jobsData } = await supabase
+    const { data: jobsData, error: jobsError } = await supabase
       .from("jobs")
-      .select(`
+      .select(
+        `
         id,
         title,
         description,
@@ -56,10 +84,18 @@ export default function MyJobsPage() {
         city,
         location_type,
         status,
-        category:categories(name)
-      `)
+deadline,
+category:categories(name)
+        `,
+      )
       .eq("customer_id", user.id)
       .order("created_at", { ascending: false });
+
+    if (jobsError) {
+      console.error(jobsError);
+      setLoading(false);
+      return;
+    }
 
     const loadedJobs = (jobsData as unknown as Job[]) ?? [];
     setJobs(loadedJobs);
@@ -71,9 +107,10 @@ export default function MyJobsPage() {
 
     const jobIds = loadedJobs.map((job) => job.id);
 
-    const { data: offersData } = await supabase
+    const { data: offersData, error: offersError } = await supabase
       .from("offers")
-      .select(`
+      .select(
+        `
         id,
         job_id,
         price,
@@ -83,11 +120,21 @@ export default function MyJobsPage() {
           user_id,
           bio,
           experience_years,
-          city
+          city,
+          profile:profiles(
+            full_name
+          )
         )
-      `)
+        `,
+      )
       .in("job_id", jobIds)
       .order("created_at", { ascending: false });
+
+    if (offersError) {
+      console.error(offersError);
+      setLoading(false);
+      return;
+    }
 
     const grouped: Record<number, Offer[]> = {};
 
@@ -108,12 +155,12 @@ export default function MyJobsPage() {
     status: "accepted" | "rejected",
   ) {
     const supabase = createClient();
-  
+
     if (status === "accepted") {
       const { error } = await supabase.rpc("accept_offer", {
         p_offer_id: offerId,
       });
-  
+
       if (error) {
         alert("Teklif kabul edilirken bir hata oluştu.");
         return;
@@ -123,13 +170,13 @@ export default function MyJobsPage() {
         .from("offers")
         .update({ status: "rejected" })
         .eq("id", offerId);
-  
+
       if (error) {
         alert("Teklif reddedilirken bir hata oluştu.");
         return;
       }
     }
-  
+
     await loadData();
   }
 
@@ -151,6 +198,7 @@ export default function MyJobsPage() {
         <h1 className="text-3xl font-semibold tracking-tight">
           İlanlarım
         </h1>
+
         <p className="mt-2 text-zinc-500">
           Yayınladığın işler ve aldığın teklifler.
         </p>
@@ -169,7 +217,6 @@ export default function MyJobsPage() {
 
             return (
               <section key={job.id}>
-                {/* JOB */}
                 <div className="rounded-2xl border border-zinc-200 bg-white p-7">
                   <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
                     <div>
@@ -179,7 +226,7 @@ export default function MyJobsPage() {
                         </span>
 
                         <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs">
-                          {job.status}
+                        {getStatusLabel(job.status)}
                         </span>
                       </div>
 
@@ -199,7 +246,7 @@ export default function MyJobsPage() {
 
                       <div className="mt-1 text-lg font-semibold">
                         {job.budget
-                          ? `${job.budget.toLocaleString("tr-TR")} TL`
+                          ? job.budget.toLocaleString("tr-TR") + " TL"
                           : "Belirtilmedi"}
                       </div>
                     </div>
@@ -207,7 +254,10 @@ export default function MyJobsPage() {
 
                   <div className="mt-6 flex flex-wrap gap-6 border-t border-zinc-100 pt-5 text-sm">
                     <div>
-                      <span className="text-zinc-400">Konum</span>
+                      <span className="text-zinc-400">
+                        Konum
+                      </span>
+
                       <div className="mt-1 font-medium">
                         {job.city ?? "Belirtilmedi"}
                       </div>
@@ -217,15 +267,27 @@ export default function MyJobsPage() {
                       <span className="text-zinc-400">
                         Çalışma şekli
                       </span>
+
                       <div className="mt-1 font-medium">
-                        {job.location_type}
+                      {getLocationLabel(job.location_type)}
                       </div>
                     </div>
+                    <div>
+  <span className="text-zinc-400">
+    Son teslim
+  </span>
 
+  <div className="mt-1 font-medium">
+    {job.deadline
+      ? new Date(job.deadline).toLocaleDateString("tr-TR")
+      : "Belirtilmedi"}
+  </div>
+</div>
                     <div>
                       <span className="text-zinc-400">
                         Teklif
                       </span>
+
                       <div className="mt-1 font-medium">
                         {jobOffers.length}
                       </div>
@@ -233,7 +295,6 @@ export default function MyJobsPage() {
                   </div>
                 </div>
 
-                {/* OFFERS */}
                 <div className="mt-5">
                   <div className="mb-4 flex items-center justify-between">
                     <h3 className="text-lg font-semibold">
@@ -256,9 +317,14 @@ export default function MyJobsPage() {
                           key={offer.id}
                           className="rounded-2xl border border-zinc-200 bg-white p-6"
                         >
-                          <div className="flex items-start justify-between">
+                          <div className="flex items-start justify-between gap-4">
                             <div>
-                              <div className="text-2xl font-semibold">
+                              <div className="text-base font-semibold">
+                                {offer.provider?.profile?.full_name ??
+                                  "Profesyonel"}
+                              </div>
+
+                              <div className="mt-1 text-2xl font-semibold">
                                 {offer.price.toLocaleString("tr-TR")} TL
                               </div>
 
@@ -266,18 +332,22 @@ export default function MyJobsPage() {
                                 {offer.provider?.experience_years ?? 0} yıl
                                 deneyim
                                 {offer.provider?.city
-                                  ? ` · ${offer.provider.city}`
+                                  ? " · " + offer.provider.city
                                   : ""}
                               </div>
                             </div>
 
                             <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs">
-                              {offer.status}
+                            {getStatusLabel(offer.status)}
                             </span>
                           </div>
 
                           {offer.provider?.bio && (
                             <div className="mt-5 border-t border-zinc-100 pt-5">
+                              <div className="mb-1 text-xs font-medium text-zinc-400">
+                                Hakkında
+                              </div>
+
                               <p className="text-sm leading-6 text-zinc-600">
                                 {offer.provider.bio}
                               </p>
@@ -299,25 +369,21 @@ export default function MyJobsPage() {
                           {offer.status === "pending" && (
                             <div className="mt-5 flex gap-3">
                               <button
+                                type="button"
                                 onClick={() =>
-                                  updateOffer(
-                                    offer.id,
-                                    "accepted",
-                                  )
+                                  updateOffer(offer.id, "accepted")
                                 }
-                                className="flex-1 rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white"
+                                className="flex-1 rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white hover:bg-zinc-800"
                               >
                                 Kabul Et
                               </button>
 
                               <button
+                                type="button"
                                 onClick={() =>
-                                  updateOffer(
-                                    offer.id,
-                                    "rejected",
-                                  )
+                                  updateOffer(offer.id, "rejected")
                                 }
-                                className="flex-1 rounded-lg border border-zinc-300 px-4 py-2.5 text-sm font-medium"
+                                className="flex-1 rounded-lg border border-zinc-300 px-4 py-2.5 text-sm font-medium hover:bg-zinc-50"
                               >
                                 Reddet
                               </button>
