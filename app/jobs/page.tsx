@@ -11,136 +11,308 @@ type Job = {
   city: string | null;
   location_type: string;
   deadline: string | null;
-  created_at: string;
-  categories: {
+  status: string;
+  category: {
     name: string;
   } | null;
 };
 
-export default function JobsPage() {
-  const supabase = createClient();
+type Offer = {
+  id: number;
+  price: number;
+  message: string | null;
+  status: string;
+  created_at: string;
+  provider: {
+    user_id: string;
+    bio: string | null;
+    experience_years: number;
+    city: string | null;
+  } | null;
+};
 
+export default function JobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [offers, setOffers] = useState<Record<number, Offer[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function loadJobs() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+  async function loadJobs() {
+    const supabase = createClient();
 
-      if (!user) {
-        window.location.href = "/login";
-        return;
-      }
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-      const { data, error } = await supabase
-        .from("jobs")
-        .select(`
-          id,
-          title,
-          description,
-          budget,
-          city,
-          location_type,
-          deadline,
-          created_at,
-          categories (
-            name
-          )
-        `)
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        setError("İlanlar yüklenemedi.");
-        setLoading(false);
-        return;
-      }
-
-      setJobs((data as Job[]) ?? []);
+    if (!user) {
+      setError("Giriş yapmalısın.");
       setLoading(false);
+      return;
     }
 
+    const { data, error } = await supabase
+      .from("jobs")
+      .select(`
+        id,
+        title,
+        description,
+        budget,
+        city,
+        location_type,
+        deadline,
+        status,
+        category:categories(name)
+      `)
+      .eq("status", "open")
+      .eq("customer_id", user.id)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      setError("İlanlar yüklenirken bir hata oluştu.");
+      setLoading(false);
+      return;
+    }
+
+    setJobs((data as unknown as Job[]) ?? []);
+
+    const jobIds = ((data as unknown as Job[]) ?? []).map((job) => job.id);
+
+    if (jobIds.length > 0) {
+      const { data: offerData, error: offerError } = await supabase
+        .from("offers")
+        .select(`
+          id,
+          job_id,
+          price,
+          message,
+          status,
+          created_at,
+          provider:provider_profiles(
+            user_id,
+            bio,
+            experience_years,
+            city
+          )
+        `)
+        .in("job_id", jobIds)
+        .order("created_at", { ascending: false });
+
+      if (!offerError && offerData) {
+        const grouped: Record<number, Offer[]> = {};
+
+        for (const offer of offerData as any[]) {
+          if (!grouped[offer.job_id]) {
+            grouped[offer.job_id] = [];
+          }
+
+          grouped[offer.job_id].push(offer);
+        }
+
+        setOffers(grouped);
+      }
+    }
+
+    setLoading(false);
+  }
+
+  async function updateOfferStatus(
+    offerId: number,
+    status: "accepted" | "rejected",
+  ) {
+    const supabase = createClient();
+
+    const { error } = await supabase
+      .from("offers")
+      .update({ status })
+      .eq("id", offerId);
+
+    if (error) {
+      setError("Teklif güncellenirken bir hata oluştu.");
+      return;
+    }
+
+    await loadJobs();
+  }
+
+  useEffect(() => {
     loadJobs();
   }, []);
 
   if (loading) {
     return (
-      <main className="flex min-h-screen items-center justify-center">
-        <p className="text-sm text-zinc-500">İlanlar yükleniyor...</p>
+      <main className="mx-auto max-w-5xl px-6 py-12">
+        <p>Yükleniyor...</p>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen px-4 py-12">
-      <div className="mx-auto max-w-4xl">
+    <main className="mx-auto max-w-5xl px-6 py-12">
+      <div className="mb-8">
         <h1 className="text-3xl font-semibold tracking-tight">
-          Uygun İşler
+          İlanlarım
         </h1>
-
-        <p className="mt-2 text-sm text-zinc-600">
-          Profilindeki hizmetlerle eşleşen işler.
+        <p className="mt-2 text-zinc-600">
+          Yayınladığın işler ve gelen teklifler.
         </p>
+      </div>
 
-        {error && (
-          <p className="mt-6 text-sm text-red-600">
-            {error}
+      {error && (
+        <p className="mb-6 rounded-lg bg-red-50 p-4 text-sm text-red-600">
+          {error}
+        </p>
+      )}
+
+      {jobs.length === 0 ? (
+        <div className="rounded-xl border border-zinc-200 p-8 text-center">
+          <p className="text-zinc-600">
+            Henüz yayınladığın bir ilan yok.
           </p>
-        )}
+        </div>
+      ) : (
+        <div className="space-y-8">
+          {jobs.map((job) => {
+            const jobOffers = offers[job.id] ?? [];
 
-        {!error && jobs.length === 0 && (
-          <div className="mt-8 rounded-xl border border-dashed border-zinc-300 p-8 text-center">
-            <p className="text-sm text-zinc-500">
-              Şu anda sana uygun bir iş bulunmuyor.
-            </p>
-          </div>
-        )}
+            return (
+              <section
+                key={job.id}
+                className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-xl font-semibold">
+                      {job.title}
+                    </h2>
 
-        <div className="mt-8 space-y-4">
-          {jobs.map((job) => (
-            <article
-              key={job.id}
-              className="rounded-xl border border-zinc-200 p-6"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                    {job.categories?.name ?? "Kategori"}
-                  </p>
+                    <p className="mt-2 text-sm text-zinc-600">
+                      {job.description}
+                    </p>
+                  </div>
 
-                  <h2 className="mt-1 text-xl font-semibold">
-                    {job.title}
-                  </h2>
+                  <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs">
+                    {job.status}
+                  </span>
                 </div>
 
-                {job.budget !== null && (
-                  <div className="text-sm font-medium">
-                    {job.budget.toLocaleString("tr-TR")} TL
+                <div className="mt-5 grid gap-3 text-sm sm:grid-cols-3">
+                  <div>
+                    <span className="text-zinc-500">Kategori</span>
+                    <p className="font-medium">
+                      {job.category?.name ?? "-"}
+                    </p>
                   </div>
-                )}
-              </div>
 
-              <p className="mt-4 text-sm leading-6 text-zinc-600">
-                {job.description}
-              </p>
+                  <div>
+                    <span className="text-zinc-500">Bütçe</span>
+                    <p className="font-medium">
+                      {job.budget
+                        ? `${job.budget.toLocaleString("tr-TR")} TL`
+                        : "Belirtilmedi"}
+                    </p>
+                  </div>
 
-              <div className="mt-5 flex flex-wrap gap-3 text-xs text-zinc-500">
-                {job.city && <span>{job.city}</span>}
+                  <div>
+                    <span className="text-zinc-500">Konum</span>
+                    <p className="font-medium">
+                      {job.city ?? "Belirtilmedi"} · {job.location_type}
+                    </p>
+                  </div>
+                </div>
 
-                <span>
-                  {job.location_type === "remote"
-                    ? "Uzaktan"
-                    : job.location_type === "on_site"
-                      ? "Yerinde"
-                      : "Hibrit"}
-                </span>
-              </div>
-            </article>
-          ))}
+                <div className="mt-8 border-t border-zinc-200 pt-6">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold">
+                      Gelen Teklifler
+                    </h3>
+
+                    <span className="text-sm text-zinc-500">
+                      {jobOffers.length} teklif
+                    </span>
+                  </div>
+
+                  {jobOffers.length === 0 ? (
+                    <p className="mt-4 text-sm text-zinc-500">
+                      Henüz bu ilana teklif gelmedi.
+                    </p>
+                  ) : (
+                    <div className="mt-4 space-y-4">
+                      {jobOffers.map((offer) => (
+                        <div
+                          key={offer.id}
+                          className="rounded-xl border border-zinc-200 bg-zinc-50 p-5"
+                        >
+                          <div className="flex items-start justify-between gap-4">
+                            <div>
+                              <p className="text-lg font-semibold">
+                                {offer.price.toLocaleString("tr-TR")} TL
+                              </p>
+
+                              <p className="mt-1 text-sm text-zinc-600">
+                                {offer.provider?.experience_years ?? 0} yıl
+                                deneyim
+                                {offer.provider?.city
+                                  ? ` · ${offer.provider.city}`
+                                  : ""}
+                              </p>
+                            </div>
+
+                            <span className="rounded-full bg-white px-3 py-1 text-xs">
+                              {offer.status}
+                            </span>
+                          </div>
+
+                          {offer.provider?.bio && (
+                            <p className="mt-4 text-sm text-zinc-700">
+                              {offer.provider.bio}
+                            </p>
+                          )}
+
+                          {offer.message && (
+                            <div className="mt-4 rounded-lg bg-white p-4 text-sm text-zinc-700">
+                              {offer.message}
+                            </div>
+                          )}
+
+                          {offer.status === "pending" && (
+                            <div className="mt-5 flex gap-3">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateOfferStatus(
+                                    offer.id,
+                                    "accepted",
+                                  )
+                                }
+                                className="rounded-lg bg-black px-4 py-2 text-sm font-medium text-white"
+                              >
+                                Teklifi Kabul Et
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateOfferStatus(
+                                    offer.id,
+                                    "rejected",
+                                  )
+                                }
+                                className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium"
+                              >
+                                Reddet
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </section>
+            );
+          })}
         </div>
-      </div>
+      )}
     </main>
   );
 }
