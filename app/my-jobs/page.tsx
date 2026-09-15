@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+
 import { createClient } from "@/lib/supabase/client";
 
 type Job = {
@@ -11,8 +12,8 @@ type Job = {
   city: string | null;
   location_type: string;
   status: string;
+  deadline: string | null;
   category: {
-    deadline: string | null;
     name: string;
   } | null;
 };
@@ -33,6 +34,7 @@ type Offer = {
     } | null;
   } | null;
 };
+
 function getStatusLabel(status: string) {
   const labels: Record<string, string> = {
     open: "Açık",
@@ -56,10 +58,12 @@ function getLocationLabel(locationType: string) {
 
   return labels[locationType] ?? locationType;
 }
+
 export default function MyJobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [offers, setOffers] = useState<Record<number, Offer[]>>({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   async function loadData() {
     const supabase = createClient();
@@ -75,8 +79,7 @@ export default function MyJobsPage() {
 
     const { data: jobsData, error: jobsError } = await supabase
       .from("jobs")
-      .select(
-        `
+      .select(`
         id,
         title,
         description,
@@ -84,23 +87,25 @@ export default function MyJobsPage() {
         city,
         location_type,
         status,
-deadline,
-category:categories(name)
-        `,
-      )
+        deadline,
+        category:categories(name)
+      `)
       .eq("customer_id", user.id)
       .order("created_at", { ascending: false });
 
     if (jobsError) {
       console.error(jobsError);
+      setError("İlanlar yüklenirken bir hata oluştu.");
       setLoading(false);
       return;
     }
 
     const loadedJobs = (jobsData as unknown as Job[]) ?? [];
+
     setJobs(loadedJobs);
 
     if (loadedJobs.length === 0) {
+      setOffers({});
       setLoading(false);
       return;
     }
@@ -109,8 +114,7 @@ category:categories(name)
 
     const { data: offersData, error: offersError } = await supabase
       .from("offers")
-      .select(
-        `
+      .select(`
         id,
         job_id,
         price,
@@ -125,20 +129,20 @@ category:categories(name)
             full_name
           )
         )
-        `,
-      )
+      `)
       .in("job_id", jobIds)
       .order("created_at", { ascending: false });
 
     if (offersError) {
       console.error(offersError);
+      setError("Teklifler yüklenirken bir hata oluştu.");
       setLoading(false);
       return;
     }
 
     const grouped: Record<number, Offer[]> = {};
 
-    for (const offer of (offersData as any[]) ?? []) {
+    for (const offer of (offersData as unknown as Offer[]) ?? []) {
       if (!grouped[offer.job_id]) {
         grouped[offer.job_id] = [];
       }
@@ -150,31 +154,39 @@ category:categories(name)
     setLoading(false);
   }
 
-  async function updateOffer(
-    offerId: number,
-    status: "accepted" | "rejected",
-  ) {
+  async function acceptOffer(offerId: number) {
+    setError(null);
+
     const supabase = createClient();
 
-    if (status === "accepted") {
-      const { error } = await supabase.rpc("accept_offer", {
-        p_offer_id: offerId,
-      });
+    const { error } = await supabase.rpc("accept_offer", {
+      p_offer_id: offerId,
+    });
 
-      if (error) {
-        alert("Teklif kabul edilirken bir hata oluştu.");
-        return;
-      }
-    } else {
-      const { error } = await supabase
-        .from("offers")
-        .update({ status: "rejected" })
-        .eq("id", offerId);
+    if (error) {
+      setError(
+        error.message || "Teklif kabul edilirken bir hata oluştu.",
+      );
+      return;
+    }
 
-      if (error) {
-        alert("Teklif reddedilirken bir hata oluştu.");
-        return;
-      }
+    await loadData();
+  }
+
+  async function rejectOffer(offerId: number) {
+    setError(null);
+
+    const supabase = createClient();
+
+    const { error } = await supabase.rpc("reject_offer", {
+      p_offer_id: offerId,
+    });
+
+    if (error) {
+      setError(
+        error.message || "Teklif reddedilirken bir hata oluştu.",
+      );
+      return;
     }
 
     await loadData();
@@ -204,6 +216,12 @@ category:categories(name)
         </p>
       </div>
 
+      {error && (
+        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
       {jobs.length === 0 ? (
         <div className="rounded-2xl border border-zinc-200 p-10 text-center">
           <p className="text-zinc-500">
@@ -226,7 +244,7 @@ category:categories(name)
                         </span>
 
                         <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs">
-                        {getStatusLabel(job.status)}
+                          {getStatusLabel(job.status)}
                         </span>
                       </div>
 
@@ -246,7 +264,7 @@ category:categories(name)
 
                       <div className="mt-1 text-lg font-semibold">
                         {job.budget
-                          ? job.budget.toLocaleString("tr-TR") + " TL"
+                          ? `${job.budget.toLocaleString("tr-TR")} TL`
                           : "Belirtilmedi"}
                       </div>
                     </div>
@@ -269,20 +287,24 @@ category:categories(name)
                       </span>
 
                       <div className="mt-1 font-medium">
-                      {getLocationLabel(job.location_type)}
+                        {getLocationLabel(job.location_type)}
                       </div>
                     </div>
-                    <div>
-  <span className="text-zinc-400">
-    Son teslim
-  </span>
 
-  <div className="mt-1 font-medium">
-    {job.deadline
-      ? new Date(job.deadline).toLocaleDateString("tr-TR")
-      : "Belirtilmedi"}
-  </div>
-</div>
+                    <div>
+                      <span className="text-zinc-400">
+                        Son teslim
+                      </span>
+
+                      <div className="mt-1 font-medium">
+                        {job.deadline
+                          ? new Date(
+                              job.deadline,
+                            ).toLocaleDateString("tr-TR")
+                          : "Belirtilmedi"}
+                      </div>
+                    </div>
+
                     <div>
                       <span className="text-zinc-400">
                         Teklif
@@ -332,13 +354,13 @@ category:categories(name)
                                 {offer.provider?.experience_years ?? 0} yıl
                                 deneyim
                                 {offer.provider?.city
-                                  ? " · " + offer.provider.city
+                                  ? ` · ${offer.provider.city}`
                                   : ""}
                               </div>
                             </div>
 
                             <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs">
-                            {getStatusLabel(offer.status)}
+                              {getStatusLabel(offer.status)}
                             </span>
                           </div>
 
@@ -371,7 +393,7 @@ category:categories(name)
                               <button
                                 type="button"
                                 onClick={() =>
-                                  updateOffer(offer.id, "accepted")
+                                  acceptOffer(offer.id)
                                 }
                                 className="flex-1 rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white hover:bg-zinc-800"
                               >
@@ -381,7 +403,7 @@ category:categories(name)
                               <button
                                 type="button"
                                 onClick={() =>
-                                  updateOffer(offer.id, "rejected")
+                                  rejectOffer(offer.id)
                                 }
                                 className="flex-1 rounded-lg border border-zinc-300 px-4 py-2.5 text-sm font-medium hover:bg-zinc-50"
                               >

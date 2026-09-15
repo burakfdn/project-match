@@ -45,6 +45,23 @@ export default function JobsPage() {
       return;
     }
 
+    // Provider'ın daha önce teklif verdiği işler
+    const { data: providerOffers, error: offersError } =
+      await supabase
+        .from("offers")
+        .select("job_id, price, status")
+        .eq("provider_id", user.id);
+
+    if (offersError) {
+      setError("Tekliflerin yüklenirken bir hata oluştu.");
+      setLoading(false);
+      return;
+    }
+
+    const submittedJobIdsFromDb =
+      (providerOffers ?? []).map((offer) => offer.job_id);
+
+    // Açık işler + provider'ın daha önce teklif verdiği işler
     const { data, error } = await supabase
       .from("jobs")
       .select(`
@@ -58,7 +75,11 @@ export default function JobsPage() {
         status,
         category:categories(name)
       `)
-      .eq("status", "open")
+      .or(
+        submittedJobIdsFromDb.length > 0
+          ? `status.eq.open,id.in.(${submittedJobIdsFromDb.join(",")})`
+          : "status.eq.open",
+      )
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -71,34 +92,21 @@ export default function JobsPage() {
 
     setJobs(jobList);
 
-    const jobIds = jobList.map((job) => job.id);
+    setSubmittedJobIds(submittedJobIdsFromDb);
 
-    if (jobIds.length > 0) {
-      const { data: offerData } = await supabase
-        .from("offers")
-        .select("job_id, price, status")
-        .eq("provider_id", user.id)
-        .in("job_id", jobIds);
+    const offerMap: Record<
+      number,
+      { price: number; status: string }
+    > = {};
 
-      setSubmittedJobIds(
-        (offerData ?? []).map((offer) => offer.job_id),
-      );
+    (providerOffers ?? []).forEach((offer) => {
+      offerMap[offer.job_id] = {
+        price: offer.price,
+        status: offer.status,
+      };
+    });
 
-      const offerMap: Record<
-        number,
-        { price: number; status: string }
-      > = {};
-
-      (offerData ?? []).forEach((offer) => {
-        offerMap[offer.job_id] = {
-          price: offer.price,
-          status: offer.status,
-        };
-      });
-
-      setSubmittedOffers(offerMap);
-    }
-
+    setSubmittedOffers(offerMap);
     setLoading(false);
   }
 
@@ -183,7 +191,9 @@ export default function JobsPage() {
   if (loading) {
     return (
       <main className="mx-auto max-w-6xl px-6 py-12">
-        <p className="text-zinc-500">Uygun işler yükleniyor...</p>
+        <p className="text-zinc-500">
+          Uygun işler yükleniyor...
+        </p>
       </main>
     );
   }
@@ -223,180 +233,215 @@ export default function JobsPage() {
         </div>
       ) : (
         <div className="grid gap-5">
-          {jobs.map((job) => (
-            <article
-              key={job.id}
-              className="rounded-2xl border border-zinc-200 bg-white p-6 transition hover:border-zinc-300"
-            >
-              <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0">
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700">
-                      {job.category?.name ?? "Kategori"}
-                    </span>
+          {jobs.map((job) => {
+            const submittedOffer = submittedOffers[job.id];
 
-                    <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-medium text-green-700">
-                      Açık
-                    </span>
+            return (
+              <article
+                key={job.id}
+                className="rounded-2xl border border-zinc-200 bg-white p-6 transition hover:border-zinc-300"
+              >
+                <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="mb-3 flex flex-wrap gap-2">
+                      <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700">
+                        {job.category?.name ?? "Kategori"}
+                      </span>
+
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-medium ${
+                          job.status === "open"
+                            ? "bg-green-50 text-green-700"
+                            : "bg-zinc-100 text-zinc-600"
+                        }`}
+                      >
+                        {job.status === "open" ? "Açık" : "Kapandı"}
+                      </span>
+                    </div>
+
+                    <h2 className="text-xl font-semibold text-zinc-950">
+                      {job.title}
+                    </h2>
+
+                    <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-600">
+                      {job.description}
+                    </p>
                   </div>
 
-                  <h2 className="text-xl font-semibold text-zinc-950">
-                    {job.title}
-                  </h2>
+                  <div className="shrink-0 rounded-xl bg-zinc-50 px-5 py-4 sm:min-w-32">
+                    <p className="text-xs text-zinc-500">
+                      Müşteri bütçesi
+                    </p>
 
-                  <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-600">
-                    {job.description}
-                  </p>
+                    <p className="mt-1 text-lg font-semibold text-zinc-950">
+                      {job.budget
+                        ? `${job.budget.toLocaleString("tr-TR")} TL`
+                        : "Belirtilmedi"}
+                    </p>
+                  </div>
                 </div>
 
-                <div className="shrink-0 rounded-xl bg-zinc-50 px-5 py-4 sm:min-w-32">
-                  <p className="text-xs text-zinc-500">
-                    Müşteri bütçesi
-                  </p>
-
-                  <p className="mt-1 text-lg font-semibold text-zinc-950">
-                    {job.budget
-                      ? `${job.budget.toLocaleString("tr-TR")} TL`
-                      : "Belirtilmedi"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-6 flex flex-wrap gap-x-8 gap-y-4 border-t border-zinc-100 pt-5">
-                <div>
-                  <p className="text-xs text-zinc-400">Konum</p>
-
-                  <p className="mt-1 text-sm font-medium">
-                    {job.city ?? "Belirtilmedi"}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-xs text-zinc-400">
-                    Çalışma şekli
-                  </p>
-
-                  <p className="mt-1 text-sm font-medium">
-                    {job.location_type === "remote"
-                      ? "Uzaktan"
-                      : job.location_type === "on_site"
-                        ? "Yerinde"
-                        : "Hibrit"}
-                  </p>
-                </div>
-
-                {job.deadline && (
+                <div className="mt-6 flex flex-wrap gap-x-8 gap-y-4 border-t border-zinc-100 pt-5">
                   <div>
                     <p className="text-xs text-zinc-400">
-                      Son tarih
+                      Konum
                     </p>
 
                     <p className="mt-1 text-sm font-medium">
-                      {new Date(job.deadline).toLocaleDateString(
-                        "tr-TR",
-                      )}
+                      {job.city ?? "Belirtilmedi"}
                     </p>
                   </div>
-                )}
-              </div>
 
-              <div className="mt-6 border-t border-zinc-100 pt-5">
-                {successJobId === job.id ? (
-                  <div className="rounded-xl bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
-                    ✓ Teklifin başarıyla gönderildi —{" "}
-                    {submittedOffers[job.id]?.price.toLocaleString(
-                      "tr-TR",
-                    )}{" "}
-                    TL
-                  </div>
-                ) : submittedJobIds.includes(job.id) ? (
-                  <div className="rounded-xl bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-900">
-                    ✓ Bu işe teklif verdin —{" "}
-                    {submittedOffers[job.id]?.price.toLocaleString(
-                      "tr-TR",
-                    )}{" "}
-                    TL
-                  </div>
-                ) : selectedJobId === job.id ? (
-                  <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-5">
-                    <div className="mb-5">
-                      <h3 className="font-semibold">
-                        Bu işe teklif ver
-                      </h3>
+                  <div>
+                    <p className="text-xs text-zinc-400">
+                      Çalışma şekli
+                    </p>
 
-                      <p className="mt-1 text-sm text-zinc-500">
-                        Fiyatını ve müşteriye iletmek istediğin mesajı yaz.
+                    <p className="mt-1 text-sm font-medium">
+                      {job.location_type === "remote"
+                        ? "Uzaktan"
+                        : job.location_type === "on_site"
+                          ? "Yerinde"
+                          : "Hibrit"}
+                    </p>
+                  </div>
+
+                  {job.deadline && (
+                    <div>
+                      <p className="text-xs text-zinc-400">
+                        Son tarih
+                      </p>
+
+                      <p className="mt-1 text-sm font-medium">
+                        {new Date(
+                          job.deadline,
+                        ).toLocaleDateString("tr-TR")}
                       </p>
                     </div>
+                  )}
+                </div>
 
-                    <div className="grid gap-4 sm:grid-cols-[180px_1fr]">
-                      <div>
-                        <label className="mb-2 block text-sm font-medium">
-                          Teklif fiyatı
-                        </label>
+                <div className="mt-6 border-t border-zinc-100 pt-5">
+                  {successJobId === job.id ? (
+                    <div className="rounded-xl bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
+                      ✓ Teklifin başarıyla gönderildi —{" "}
+                      {submittedOffer?.price.toLocaleString(
+                        "tr-TR",
+                      )}{" "}
+                      TL
+                    </div>
+                  ) : submittedJobIds.includes(job.id) ? (
+                    <div
+                      className={`rounded-xl px-4 py-3 text-sm font-semibold ${
+                        submittedOffer?.status === "accepted"
+                          ? "bg-green-50 text-green-700"
+                          : submittedOffer?.status === "rejected"
+                            ? "bg-red-50 text-red-700"
+                            : "bg-gray-100 text-gray-900"
+                      }`}
+                    >
+                      {submittedOffer?.status === "accepted"
+                        ? "✓ Teklifin kabul edildi"
+                        : submittedOffer?.status === "rejected"
+                          ? "✕ Teklifin reddedildi"
+                          : "✓ Teklif verdin"}{" "}
+                      —{" "}
+                      {submittedOffer?.price.toLocaleString(
+                        "tr-TR",
+                      )}{" "}
+                      TL
+                    </div>
+                  ) : job.status !== "open" ? (
+                    <div className="rounded-xl bg-zinc-100 px-4 py-3 text-sm font-medium text-zinc-600">
+                      Bu ilan kapandı.
+                    </div>
+                  ) : selectedJobId === job.id ? (
+                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-5">
+                      <div className="mb-5">
+                        <h3 className="font-semibold">
+                          Bu işe teklif ver
+                        </h3>
 
-                        <div className="flex items-center rounded-lg border border-zinc-300 bg-white">
-                          <input
-                            type="number"
-                            min="0"
-                            value={price}
-                            onChange={(e) => setPrice(e.target.value)}
-                            placeholder="8000"
-                            className="w-full rounded-lg px-3 py-2.5 text-sm outline-none"
+                        <p className="mt-1 text-sm text-zinc-500">
+                          Fiyatını ve müşteriye iletmek istediğin mesajı yaz.
+                        </p>
+                      </div>
+
+                      <div className="grid gap-4 sm:grid-cols-[180px_1fr]">
+                        <div>
+                          <label className="mb-2 block text-sm font-medium">
+                            Teklif fiyatı
+                          </label>
+
+                          <div className="flex items-center rounded-lg border border-zinc-300 bg-white">
+                            <input
+                              type="number"
+                              min="0"
+                              value={price}
+                              onChange={(e) =>
+                                setPrice(e.target.value)
+                              }
+                              placeholder="8000"
+                              className="w-full rounded-lg px-3 py-2.5 text-sm outline-none"
+                            />
+
+                            <span className="pr-3 text-sm text-zinc-500">
+                              TL
+                            </span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="mb-2 block text-sm font-medium">
+                            Mesaj
+                          </label>
+
+                          <textarea
+                            value={message}
+                            onChange={(e) =>
+                              setMessage(e.target.value)
+                            }
+                            placeholder="Müşteriye kendini ve teklifini kısaca anlat..."
+                            rows={3}
+                            className="w-full resize-none rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-zinc-500"
                           />
-
-                          <span className="pr-3 text-sm text-zinc-500">
-                            TL
-                          </span>
                         </div>
                       </div>
 
-                      <div>
-                        <label className="mb-2 block text-sm font-medium">
-                          Mesaj
-                        </label>
+                      <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                        <button
+                          type="button"
+                          onClick={closeOfferForm}
+                          className="rounded-lg border border-zinc-300 bg-white px-5 py-2.5 text-sm font-medium"
+                        >
+                          Vazgeç
+                        </button>
 
-                        <textarea
-                          value={message}
-                          onChange={(e) => setMessage(e.target.value)}
-                          placeholder="Müşteriye kendini ve teklifini kısaca anlat..."
-                          rows={3}
-                          className="w-full resize-none rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-zinc-500"
-                        />
+                        <button
+                          type="button"
+                          onClick={() => submitOffer(job.id)}
+                          disabled={sending}
+                          className="rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+                        >
+                          {sending
+                            ? "Gönderiliyor..."
+                            : "Teklifi Gönder"}
+                        </button>
                       </div>
                     </div>
-
-                    <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                      <button
-                        type="button"
-                        onClick={closeOfferForm}
-                        className="rounded-lg border border-zinc-300 bg-white px-5 py-2.5 text-sm font-medium"
-                      >
-                        Vazgeç
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => submitOffer(job.id)}
-                        disabled={sending}
-                        className="rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
-                      >
-                        {sending ? "Gönderiliyor..." : "Teklifi Gönder"}
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => openOfferForm(job.id)}
-                    className="rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800"
-                  >
-                    Teklif Ver
-                  </button>
-                )}
-              </div>
-            </article>
-          ))}
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => openOfferForm(job.id)}
+                      className="rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800"
+                    >
+                      Teklif Ver
+                    </button>
+                  )}
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
     </main>
