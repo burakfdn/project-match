@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+
 import { createClient } from "@/lib/supabase/client";
 
 type Job = {
@@ -27,6 +28,9 @@ export default function JobsPage() {
   const [sending, setSending] = useState(false);
   const [successJobId, setSuccessJobId] = useState<number | null>(null);
   const [submittedJobIds, setSubmittedJobIds] = useState<number[]>([]);
+  const [submittedOffers, setSubmittedOffers] = useState<
+    Record<number, { price: number; status: string }>
+  >({});
 
   async function loadJobs() {
     const supabase = createClient();
@@ -64,6 +68,7 @@ export default function JobsPage() {
     }
 
     const jobList = (data as unknown as Job[]) ?? [];
+
     setJobs(jobList);
 
     const jobIds = jobList.map((job) => job.id);
@@ -71,13 +76,27 @@ export default function JobsPage() {
     if (jobIds.length > 0) {
       const { data: offerData } = await supabase
         .from("offers")
-        .select("job_id")
+        .select("job_id, price, status")
         .eq("provider_id", user.id)
         .in("job_id", jobIds);
 
       setSubmittedJobIds(
         (offerData ?? []).map((offer) => offer.job_id),
       );
+
+      const offerMap: Record<
+        number,
+        { price: number; status: string }
+      > = {};
+
+      (offerData ?? []).forEach((offer) => {
+        offerMap[offer.job_id] = {
+          price: offer.price,
+          status: offer.status,
+        };
+      });
+
+      setSubmittedOffers(offerMap);
     }
 
     setLoading(false);
@@ -104,10 +123,12 @@ export default function JobsPage() {
       return;
     }
 
+    const offerPrice = Number(price);
+
     const { error } = await supabase.from("offers").insert({
       job_id: jobId,
       provider_id: user.id,
-      price: Number(price),
+      price: offerPrice,
       message: message || null,
     });
 
@@ -123,9 +144,19 @@ export default function JobsPage() {
     }
 
     setSuccessJobId(jobId);
+
     setSubmittedJobIds((current) =>
       current.includes(jobId) ? current : [...current, jobId],
     );
+
+    setSubmittedOffers((current) => ({
+      ...current,
+      [jobId]: {
+        price: offerPrice,
+        status: "pending",
+      },
+    }));
+
     setSelectedJobId(null);
     setPrice("");
     setMessage("");
@@ -234,6 +265,7 @@ export default function JobsPage() {
               <div className="mt-6 flex flex-wrap gap-x-8 gap-y-4 border-t border-zinc-100 pt-5">
                 <div>
                   <p className="text-xs text-zinc-400">Konum</p>
+
                   <p className="mt-1 text-sm font-medium">
                     {job.city ?? "Belirtilmedi"}
                   </p>
@@ -271,11 +303,19 @@ export default function JobsPage() {
               <div className="mt-6 border-t border-zinc-100 pt-5">
                 {successJobId === job.id ? (
                   <div className="rounded-xl bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
-                    ✓ Teklifin başarıyla gönderildi.
+                    ✓ Teklifin başarıyla gönderildi —{" "}
+                    {submittedOffers[job.id]?.price.toLocaleString(
+                      "tr-TR",
+                    )}{" "}
+                    TL
                   </div>
                 ) : submittedJobIds.includes(job.id) ? (
                   <div className="rounded-xl bg-gray-100 px-4 py-3 text-sm font-semibold text-gray-900">
-                    ✓ Bu işe teklif verdin.
+                    ✓ Bu işe teklif verdin —{" "}
+                    {submittedOffers[job.id]?.price.toLocaleString(
+                      "tr-TR",
+                    )}{" "}
+                    TL
                   </div>
                 ) : selectedJobId === job.id ? (
                   <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-5">
@@ -341,9 +381,7 @@ export default function JobsPage() {
                         disabled={sending}
                         className="rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
                       >
-                        {sending
-                          ? "Gönderiliyor..."
-                          : "Teklifi Gönder"}
+                        {sending ? "Gönderiliyor..." : "Teklifi Gönder"}
                       </button>
                     </div>
                   </div>
