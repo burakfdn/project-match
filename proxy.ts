@@ -38,48 +38,128 @@ export async function proxy(request: NextRequest) {
 
   const pathname = request.nextUrl.pathname;
 
-  // Giriş yapmamış kullanıcı
-  if (!user) {
-    const publicPaths = ["/", "/login", "/signup"];
+  const publicPaths = [
+    "/",
+    "/login",
+    "/signup",
+    "/onboarding",
+  ];
 
-    if (!publicPaths.includes(pathname) && pathname !== "/onboarding") {
-      return NextResponse.redirect(new URL("/login", request.url));
+  if (!user) {
+    if (!publicPaths.includes(pathname)) {
+      return NextResponse.redirect(
+        new URL("/login", request.url),
+      );
     }
 
     return response;
   }
 
-  // Giriş yapmış kullanıcı
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
+  const { data: permissionData, error: permissionError } =
+    await supabase.rpc("get_my_permissions");
 
-  const role = profile?.role;
-
-  // Rolü olmayan kullanıcı onboarding'e gider
-  if (!role && pathname !== "/onboarding") {
-    return NextResponse.redirect(new URL("/onboarding", request.url));
+  if (permissionError) {
+    return NextResponse.redirect(
+      new URL("/", request.url),
+    );
   }
 
-  // Onboarding'i tamamlamış kullanıcı onboarding'e tekrar gidemez
-  if (role && pathname === "/onboarding") {
-    return NextResponse.redirect(new URL("/", request.url));
+  const permissionRow = Array.isArray(permissionData)
+    ? permissionData[0]
+    : permissionData;
+
+  if (!permissionRow) {
+    return NextResponse.redirect(
+      new URL("/", request.url),
+    );
   }
 
-  // Customer-only sayfalar
-  const customerPaths = ["/jobs/new", "/my-jobs"];
+  const customerEnabled =
+    permissionRow.customer_enabled ?? false;
 
-  if (customerPaths.includes(pathname) && role !== "customer") {
-    return NextResponse.redirect(new URL("/", request.url));
+  const providerEnabled =
+    permissionRow.provider_enabled ?? false;
+
+  const isAdmin =
+    permissionRow.is_admin ?? false;
+
+  if (
+    pathname === "/login" ||
+    pathname === "/signup"
+  ) {
+    return NextResponse.redirect(
+      new URL("/", request.url),
+    );
   }
 
-  // Provider-only sayfalar
-  const providerPaths = ["/jobs", "/profile"];
+  /*
+   * Proje Sahibi rotaları
+   *
+   * /jobs/new özellikle burada tutuluyor.
+   * Çünkü /jobs/new, /jobs altında olmasına rağmen
+   * Uzman sayfası değildir.
+   *
+   * /jobs/[id]/edit de müşteri rotasıdır.
+   * Sabit "/jobs/edit" kullanılmaz; id segmentinden sonra
+   * "edit" gelen pathname yakalanır.
+   */
+  const customerRoutes = [
+    "/jobs/new",
+    "/my-jobs",
+  ];
 
-  if (providerPaths.includes(pathname) && role !== "provider") {
-    return NextResponse.redirect(new URL("/", request.url));
+  const jobPathParts = pathname.split("/");
+  const isJobEditRoute =
+    jobPathParts[1] === "jobs" &&
+    Boolean(jobPathParts[2]) &&
+    jobPathParts[3] === "edit";
+
+  const isCustomerRoute =
+    customerRoutes.some(
+      (route) =>
+        pathname === route ||
+        pathname.startsWith(`${route}/`),
+    ) || isJobEditRoute;
+
+  if (isCustomerRoute && !customerEnabled) {
+    return NextResponse.redirect(
+      new URL("/", request.url),
+    );
+  }
+
+  /*
+   * Uzman rotaları
+   *
+   * /jobs/new ve /jobs/[id]/edit burada özellikle
+   * hariç tutuluyor.
+   */
+  const isProviderRoute =
+    pathname === "/jobs" ||
+    (
+      pathname.startsWith("/jobs/") &&
+      pathname !== "/jobs/new" &&
+      !pathname.startsWith("/jobs/new/") &&
+      !isJobEditRoute
+    ) ||
+    pathname === "/my-offers" ||
+    pathname.startsWith("/my-offers/") ||
+    pathname === "/profile" ||
+    pathname.startsWith("/profile/");
+
+  if (isProviderRoute && !providerEnabled) {
+    return NextResponse.redirect(
+      new URL("/", request.url),
+    );
+  }
+
+  const isAdminRoute =
+    pathname === "/admin" ||
+    pathname.startsWith("/admin/");
+
+  if (isAdminRoute && !isAdmin) {
+    return NextResponse.redirect(
+      new URL("/", request.url),
+    );
   }
 
   return response;

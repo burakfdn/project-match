@@ -4,14 +4,17 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
+type AccountType = "customer" | "provider" | "both" | null;
+
 export default function OnboardingPage() {
   const router = useRouter();
-  const [role, setRole] = useState<"customer" | "provider" | null>(null);
+
+  const [accountType, setAccountType] = useState<AccountType>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleContinue() {
-    if (!role) {
+    if (!accountType) {
       setError("Lütfen bir seçenek seç.");
       return;
     }
@@ -30,16 +33,25 @@ export default function OnboardingPage() {
       return;
     }
 
-    const { error } = await supabase
-      .from("profiles")
-      .update({ role })
-      .eq("id", user.id);
+    const customerEnabled =
+      accountType === "customer" || accountType === "both";
+
+    const providerEnabled =
+      accountType === "provider" || accountType === "both";
+
+    const { error } = await supabase.rpc("set_my_account_type", {
+      p_customer_enabled: customerEnabled,
+      p_provider_enabled: providerEnabled,
+    });
 
     if (error) {
+      console.error(error);
       setError("Profil güncellenirken bir hata oluştu.");
       setPending(false);
       return;
     }
+
+    localStorage.removeItem("project-match-mode");
 
     router.push("/");
     router.refresh();
@@ -47,49 +59,83 @@ export default function OnboardingPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center px-4 py-16">
-      <div className="w-full max-w-lg">
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Project Match'e hoş geldin
+      <div className="w-full max-w-2xl">
+        <p className="text-sm font-medium text-zinc-500">
+          Project Match
+        </p>
+
+        <h1 className="mt-3 text-3xl font-semibold tracking-tight">
+          Project Match&apos;e hoş geldin
         </h1>
 
         <p className="mt-2 text-zinc-600">
           Platformu nasıl kullanmak istiyorsun?
         </p>
 
-        <div className="mt-8 grid gap-4 sm:grid-cols-2">
+        <div className="mt-8 grid gap-4 sm:grid-cols-3">
           <button
             type="button"
-            onClick={() => setRole("customer")}
+            onClick={() => setAccountType("customer")}
             className={`rounded-xl border p-6 text-left transition ${
-              role === "customer"
-                ? "border-black bg-zinc-100"
-                : "border-zinc-200 hover:border-zinc-400"
+              accountType === "customer"
+                ? "border-violet-400 bg-violet-50"
+                : "border-zinc-200 hover:border-violet-300"
             }`}
           >
-            <div className="text-lg font-medium">Hizmet arıyorum</div>
-            <div className="mt-2 text-sm text-zinc-600">
-              İşimi yapacak uygun profesyoneller arıyorum.
+            <div className="text-lg font-medium">
+              Proje Sahibi
+            </div>
+
+            <div className="mt-2 text-sm leading-6 text-zinc-600">
+              İhtiyacımı yayınlamak ve uygun uzmanlardan
+              teklif almak istiyorum.
             </div>
           </button>
 
           <button
             type="button"
-            onClick={() => setRole("provider")}
+            onClick={() => setAccountType("provider")}
             className={`rounded-xl border p-6 text-left transition ${
-              role === "provider"
-                ? "border-black bg-zinc-100"
-                : "border-zinc-200 hover:border-zinc-400"
+              accountType === "provider"
+                ? "border-emerald-400 bg-emerald-50"
+                : "border-zinc-200 hover:border-emerald-300"
             }`}
           >
-            <div className="text-lg font-medium">Hizmet veriyorum</div>
-            <div className="mt-2 text-sm text-zinc-600">
-              Yeteneklerimle iş almak ve teklif vermek istiyorum.
+            <div className="text-lg font-medium">
+              Uzman
+            </div>
+
+            <div className="mt-2 text-sm leading-6 text-zinc-600">
+              Uzmanlıklarıma uygun işler bulmak ve teklif
+              vermek istiyorum.
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setAccountType("both")}
+            className={`rounded-xl border p-6 text-left transition ${
+              accountType === "both"
+                ? "border-blue-400 bg-blue-50"
+                : "border-zinc-200 hover:border-blue-300"
+            }`}
+          >
+            <div className="text-lg font-medium">
+              Her İkisi
+            </div>
+
+            <div className="mt-2 text-sm leading-6 text-zinc-600">
+              Hem proje oluşturmak hem de uzman olarak
+              iş almak istiyorum.
             </div>
           </button>
         </div>
 
         {error && (
-          <p className="mt-4 text-sm text-red-600" role="alert">
+          <p
+            className="mt-4 text-sm text-red-600"
+            role="alert"
+          >
             {error}
           </p>
         )}
@@ -97,7 +143,7 @@ export default function OnboardingPage() {
         <button
           type="button"
           onClick={handleContinue}
-          disabled={!role || pending}
+          disabled={!accountType || pending}
           className="mt-6 w-full rounded-md bg-zinc-950 px-4 py-3 text-sm font-medium text-white disabled:opacity-50"
         >
           {pending ? "Kaydediliyor..." : "Devam et"}

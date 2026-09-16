@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/client";
 
@@ -99,18 +101,36 @@ const CITIES = [
   "Zonguldak",
 ];
 
-export default function NewJobPage() {
+function toDatetimeLocal(value: string | null) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const pad = (part: number) => String(part).padStart(2, "0");
+
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+export default function EditJobPage() {
+  const params = useParams();
+  const router = useRouter();
+
+  const jobId =
+    typeof params.id === "string" ? params.id : "";
+
   const [categories, setCategories] = useState<Category[]>([]);
   const [services, setServices] = useState<Service[]>([]);
 
-  const [userId, setUserId] = useState<string | null>(null);
-
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-
   const [categoryId, setCategoryId] = useState("");
   const [serviceId, setServiceId] = useState("");
-
   const [budget, setBudget] = useState("");
   const [city, setCity] = useState("");
   const [locationType, setLocationType] = useState("remote");
@@ -118,6 +138,7 @@ export default function NewJobPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [canEdit, setCanEdit] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const availableServices = services.filter(
@@ -126,6 +147,15 @@ export default function NewJobPage() {
 
   useEffect(() => {
     async function loadData() {
+      setLoading(true);
+      setError(null);
+
+      if (!jobId) {
+        setCanEdit(false);
+        setLoading(false);
+        return;
+      }
+
       const supabase = createClient();
 
       const {
@@ -133,29 +163,50 @@ export default function NewJobPage() {
       } = await supabase.auth.getUser();
 
       if (!user) {
-        window.location.href = "/login";
+        router.push("/login");
         return;
       }
 
-      setUserId(user.id);
-
-      const [categoriesResult, servicesResult] = await Promise.all([
-        supabase
-          .from("categories")
-          .select("id, name")
-          .in("id", [3, 12, 13, 14, 15, 16, 17, 18])
-          .order("name"),
-
-        supabase
-          .from("services")
-          .select("id, category_id, name")
-          .order("name"),
-      ]);
+      const [categoriesResult, servicesResult, jobResult] =
+        await Promise.all([
+          supabase
+            .from("categories")
+            .select("id, name")
+            .order("name"),
+          supabase
+            .from("services")
+            .select("id, category_id, name")
+            .order("name"),
+          supabase
+            .from("jobs")
+            .select(
+              `
+                id,
+                customer_id,
+                title,
+                description,
+                budget,
+                city,
+                location_type,
+                deadline,
+                status,
+                service_id,
+                service:services (
+                  id,
+                  category_id,
+                  name
+                )
+              `,
+            )
+            .eq("id", jobId)
+            .single(),
+        ]);
 
       if (categoriesResult.error) {
         setError(
           `Kategoriler yüklenemedi: ${categoriesResult.error.message}`,
         );
+        setCanEdit(false);
         setLoading(false);
         return;
       }
@@ -164,6 +215,7 @@ export default function NewJobPage() {
         setError(
           `Hizmetler yüklenemedi: ${servicesResult.error.message}`,
         );
+        setCanEdit(false);
         setLoading(false);
         return;
       }
@@ -171,17 +223,56 @@ export default function NewJobPage() {
       setCategories(categoriesResult.data ?? []);
       setServices(servicesResult.data ?? []);
 
+      const job = jobResult.data;
+
+      if (jobResult.error || !job) {
+        setCanEdit(false);
+        setLoading(false);
+        return;
+      }
+
+      if (
+        job.customer_id !== user.id ||
+        job.status !== "open"
+      ) {
+        setCanEdit(false);
+        setLoading(false);
+        return;
+      }
+
+      const service = Array.isArray(job.service)
+        ? job.service[0]
+        : job.service;
+
+      setTitle(job.title ?? "");
+      setDescription(job.description ?? "");
+      setBudget(
+        job.budget !== null && job.budget !== undefined
+          ? String(job.budget)
+          : "",
+      );
+      setLocationType(job.location_type ?? "remote");
+      setCity(job.city ?? "");
+      setDeadline(toDatetimeLocal(job.deadline));
+      setCategoryId(
+        service?.category_id ? String(service.category_id) : "",
+      );
+      setServiceId(
+        job.service_id ? String(job.service_id) : "",
+      );
+
+      setCanEdit(true);
       setLoading(false);
     }
 
     loadData();
-  }, []);
+  }, [jobId, router]);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
 
-    if (!userId) {
-      setError("Giriş yapmalısın.");
+    if (!jobId) {
+      setError("Bu ilan düzenlenemiyor.");
       return;
     }
 
@@ -236,40 +327,66 @@ export default function NewJobPage() {
 
     const supabase = createClient();
 
-    const { error } = await supabase.from("jobs").insert({
-      customer_id: userId,
-      title: title.trim(),
-      description: description.trim(),
+    const { error: updateError } = await supabase.rpc(
+      "update_my_job",
+      {
+        p_job_id: Number(jobId),
+        p_title: title.trim(),
+        p_description: description.trim(),
+        p_budget: budget ? Number(budget) : null,
+        p_city: locationType === "remote" ? null : city || null,
+        p_location_type: locationType,
+        p_deadline: deadline
+          ? new Date(deadline).toISOString()
+          : null,
+        p_service_id: Number(serviceId),
+      },
+    );
 
-      // Yeni matching sisteminin kullandığı hizmet.
-      service_id: Number(serviceId),
-
-      budget: budget ? Number(budget) : null,
-
-      city: locationType === "remote" ? null : city || null,
-
-      location_type: locationType,
-
-      deadline: deadline
-        ? new Date(deadline).toISOString()
-        : null,
-    });
-
-    if (error) {
+    if (updateError) {
       setError(
-        `İlan oluşturulurken bir hata oluştu: ${error.message}`,
+        updateError.message ||
+          "İlan güncellenirken bir hata oluştu.",
       );
       setSaving(false);
       return;
     }
 
-    window.location.href = "/my-jobs";
+    router.push(`/jobs/${jobId}`);
   }
 
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center">
         <p className="text-sm text-zinc-500">Yükleniyor...</p>
+      </main>
+    );
+  }
+
+  if (!canEdit) {
+    return (
+      <main className="min-h-screen px-4 py-12">
+        <div className="mx-auto max-w-2xl">
+          <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700">
+            Bu ilan düzenlenemiyor.
+          </div>
+
+          {jobId ? (
+            <Link
+              href={`/jobs/${jobId}`}
+              className="mt-6 inline-block text-sm font-medium text-zinc-700 hover:text-zinc-950"
+            >
+              ← İlana dön
+            </Link>
+          ) : (
+            <Link
+              href="/my-jobs"
+              className="mt-6 inline-block text-sm font-medium text-zinc-700 hover:text-zinc-950"
+            >
+              ← İlanlarım
+            </Link>
+          )}
+        </div>
       </main>
     );
   }
@@ -283,12 +400,11 @@ export default function NewJobPage() {
           </p>
 
           <h1 className="mt-2 text-3xl font-semibold tracking-tight">
-            Yeni İş İlanı
+            İlanı Düzenle
           </h1>
 
           <p className="mt-2 text-sm leading-6 text-zinc-600">
-            Yapılmasını istediğin işi anlat. Hizmetine ve çalışma
-            koşullarına uygun profesyoneller ilanını görebilecek.
+            Açık ilanındaki bilgileri güncelleyebilirsin.
           </p>
         </div>
 
@@ -308,7 +424,7 @@ export default function NewJobPage() {
               id="title"
               type="text"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(event) => setTitle(event.target.value)}
               placeholder="Örn. Sosyal medya için 5 reels çekimi"
               className="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2.5 outline-none focus:border-zinc-500"
             />
@@ -325,7 +441,9 @@ export default function NewJobPage() {
             <textarea
               id="description"
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(event) =>
+                setDescription(event.target.value)
+              }
               rows={6}
               placeholder="İhtiyacını, beklentilerini ve varsa özel şartları anlat..."
               className="mt-2 w-full resize-none rounded-lg border border-zinc-300 px-3 py-2.5 outline-none focus:border-zinc-500"
@@ -343,8 +461,8 @@ export default function NewJobPage() {
             <select
               id="category"
               value={categoryId}
-              onChange={(e) => {
-                setCategoryId(e.target.value);
+              onChange={(event) => {
+                setCategoryId(event.target.value);
                 setServiceId("");
               }}
               className="mt-2 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2.5 outline-none focus:border-zinc-500"
@@ -373,14 +491,12 @@ export default function NewJobPage() {
             <select
               id="service"
               value={serviceId}
-              onChange={(e) => setServiceId(e.target.value)}
+              onChange={(event) => setServiceId(event.target.value)}
               disabled={!categoryId}
               className="mt-2 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2.5 outline-none focus:border-zinc-500 disabled:cursor-not-allowed disabled:bg-zinc-100"
             >
               <option value="">
-                {categoryId
-                  ? "Hizmet seç"
-                  : "Önce kategori seç"}
+                {categoryId ? "Hizmet seç" : "Önce kategori seç"}
               </option>
 
               {availableServices.map((service) => (
@@ -392,10 +508,6 @@ export default function NewJobPage() {
                 </option>
               ))}
             </select>
-
-            <p className="mt-1.5 text-xs text-zinc-500">
-              İşinin hangi hizmete ihtiyaç duyduğunu seç.
-            </p>
           </div>
 
           <div>
@@ -412,7 +524,7 @@ export default function NewJobPage() {
                 type="number"
                 min="0"
                 value={budget}
-                onChange={(e) => setBudget(e.target.value)}
+                onChange={(event) => setBudget(event.target.value)}
                 placeholder="Örn. 10000"
                 className="w-full rounded-lg px-3 py-2.5 outline-none"
               />
@@ -421,10 +533,6 @@ export default function NewJobPage() {
                 TL
               </span>
             </div>
-
-            <p className="mt-1.5 text-xs text-zinc-500">
-              Bütçe belirtmek zorunlu değil.
-            </p>
           </div>
 
           <div>
@@ -438,10 +546,10 @@ export default function NewJobPage() {
             <select
               id="locationType"
               value={locationType}
-              onChange={(e) => {
-                setLocationType(e.target.value);
+              onChange={(event) => {
+                setLocationType(event.target.value);
 
-                if (e.target.value === "remote") {
+                if (event.target.value === "remote") {
                   setCity("");
                 }
               }}
@@ -451,10 +559,6 @@ export default function NewJobPage() {
               <option value="on_site">Yerinde</option>
               <option value="hybrid">Hibrit</option>
             </select>
-
-            <p className="mt-1.5 text-xs text-zinc-500">
-              Uzaktan işlerde şehir eşleşmesi aranmaz.
-            </p>
           </div>
 
           {locationType !== "remote" && (
@@ -469,7 +573,7 @@ export default function NewJobPage() {
               <select
                 id="city"
                 value={city}
-                onChange={(e) => setCity(e.target.value)}
+                onChange={(event) => setCity(event.target.value)}
                 className="mt-2 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2.5 outline-none focus:border-zinc-500"
               >
                 <option value="">Şehir seç</option>
@@ -498,14 +602,9 @@ export default function NewJobPage() {
               id="deadline"
               type="datetime-local"
               value={deadline}
-              onChange={(e) => setDeadline(e.target.value)}
-              className="mt-2 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2.5 outline-none focus:border-zinc-500"
+              onChange={(event) => setDeadline(event.target.value)}
+              className="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2.5 outline-none focus:border-zinc-500"
             />
-
-            <p className="mt-1.5 text-xs text-zinc-500">
-              İstersen tekliflerin son kabul edileceği tarihi
-              belirleyebilirsin.
-            </p>
           </div>
 
           {error && (
@@ -517,13 +616,24 @@ export default function NewJobPage() {
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={saving}
-            className="w-full rounded-lg bg-zinc-950 px-4 py-3 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {saving ? "Yayınlanıyor..." : "İlanı Yayınla"}
-          </button>
+          <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+            <Link
+              href={`/jobs/${jobId}`}
+              className="rounded-lg border border-zinc-200 px-4 py-3 text-center text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+            >
+              İptal
+            </Link>
+
+            <button
+              type="submit"
+              disabled={saving}
+              className="rounded-lg bg-zinc-950 px-4 py-3 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saving
+                ? "Kaydediliyor..."
+                : "Değişiklikleri Kaydet"}
+            </button>
+          </div>
         </form>
       </div>
     </main>

@@ -1,11 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 
+import { getPreviewUser } from "@/lib/preview";
 import { createClient } from "@/lib/supabase/client";
 
 type Job = {
   id: number;
+  customer_id: string;
   title: string;
   description: string;
   budget: number | null;
@@ -13,27 +17,40 @@ type Job = {
   location_type: string;
   deadline: string | null;
   status: string;
-  category: {
+  service: {
+    id: number;
     name: string;
+    category: {
+      id: number;
+      name: string;
+    } | null;
   } | null;
 };
 
+type ProviderOffer = {
+  job_id: number;
+  price: number;
+  status: string;
+};
+
 export default function JobsPage() {
+  const router = useRouter();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
-  const [price, setPrice] = useState("");
-  const [message, setMessage] = useState("");
-  const [sending, setSending] = useState(false);
-  const [successJobId, setSuccessJobId] = useState<number | null>(null);
   const [submittedJobIds, setSubmittedJobIds] = useState<number[]>([]);
   const [submittedOffers, setSubmittedOffers] = useState<
     Record<number, { price: number; status: string }>
   >({});
+  const [isPreview, setIsPreview] = useState(false);
 
   async function loadJobs() {
     const supabase = createClient();
+
+    setLoading(true);
+    setError(null);
+
+    const previewUser = getPreviewUser();
 
     const {
       data: { user },
@@ -45,53 +62,158 @@ export default function JobsPage() {
       return;
     }
 
-    // Provider'ın daha önce teklif verdiği işler
-    const { data: providerOffers, error: offersError } =
-      await supabase
+    const effectiveUserId = previewUser?.id ?? user.id;
+    const previewMode = previewUser !== null;
+
+    setIsPreview(previewMode);
+
+    let providerOffers: ProviderOffer[] = [];
+
+    /*
+     * Preview modunda seçilen uzman adına göre teklifleri
+     * admin RPC üzerinden alıyoruz.
+     *
+     * Normal kullanımda mevcut RLS sistemi kullanılıyor.
+     */
+    if (previewMode) {
+      const { data: previewOffers, error: offersError } =
+        await supabase.rpc("admin_preview_provider_offers", {
+          p_user_id: effectiveUserId,
+        });
+
+      if (offersError) {
+        setError(
+          `Teklifler yüklenirken bir hata oluştu: ${offersError.message}`,
+        );
+        setLoading(false);
+        return;
+      }
+
+      providerOffers = (previewOffers ?? []) as ProviderOffer[];
+    } else {
+      const { data, error: offersError } = await supabase
         .from("offers")
         .select("job_id, price, status")
-        .eq("provider_id", user.id);
+        .eq("provider_id", effectiveUserId);
 
-    if (offersError) {
-      setError("Tekliflerin yüklenirken bir hata oluştu.");
-      setLoading(false);
-      return;
+      if (offersError) {
+        setError(
+          `Teklifler yüklenirken bir hata oluştu: ${offersError.message}`,
+        );
+        setLoading(false);
+        return;
+      }
+
+      providerOffers = (data ?? []) as ProviderOffer[];
     }
 
-    const submittedJobIdsFromDb =
-      (providerOffers ?? []).map((offer) => offer.job_id);
+    const submittedJobIdsFromDb = providerOffers.map(
+      (offer) => offer.job_id,
+    );
 
-    // Açık işler + provider'ın daha önce teklif verdiği işler
-    const { data, error } = await supabase
-      .from("jobs")
-      .select(`
-        id,
-        title,
-        description,
-        budget,
-        city,
-        location_type,
-        deadline,
-        status,
-        category:categories(name)
-      `)
-      .or(
-        submittedJobIdsFromDb.length > 0
-          ? `status.eq.open,id.in.(${submittedJobIdsFromDb.join(",")})`
-          : "status.eq.open",
-      )
-      .order("created_at", { ascending: false });
+    let jobList: Job[] = [];
 
-    if (error) {
-      setError("Uygun işler yüklenirken bir hata oluştu.");
-      setLoading(false);
-      return;
+    if (previewMode) {
+      /*
+       * Preview modunda RLS'nin gerçek admin kullanıcısını değil,
+       * seçilen uzmanı dikkate alması için admin RPC kullanıyoruz.
+       */
+      const { data, error } = await supabase.rpc(
+        "admin_preview_provider_jobs",
+        {
+          p_user_id: effectiveUserId,
+        },
+      );
+
+      if (error) {
+        setError(
+          `Uygun işler yüklenirken bir hata oluştu: ${error.message}`,
+        );
+        setLoading(false);
+        return;
+      }
+
+      jobList = (
+        (data ?? []) as Array<{
+          id: number;
+          customer_id: string;
+          title: string;
+          description: string;
+          budget: number | null;
+          city: string | null;
+          location_type: string;
+          deadline: string | null;
+          status: string;
+          service_id: number;
+          service_name: string;
+          category_id: number | null;
+          category_name: string | null;
+        }>
+      ).map((job) => ({
+        id: job.id,
+        customer_id: job.customer_id,
+        title: job.title,
+        description: job.description,
+        budget: job.budget,
+        city: job.city,
+        location_type: job.location_type,
+        deadline: job.deadline,
+        status: job.status,
+        service: {
+          id: job.service_id,
+          name: job.service_name,
+          category: job.category_id
+            ? {
+                id: job.category_id,
+                name: job.category_name ?? "",
+              }
+            : null,
+        },
+      }));
+    } else {
+      /*
+       * Normal kullanıcı:
+       * Mevcut RLS + matching sistemi aynen çalışıyor.
+       */
+      const { data, error } = await supabase
+        .from("jobs")
+        .select(
+          `
+            id,
+            customer_id,
+            title,
+            description,
+            budget,
+            city,
+            location_type,
+            deadline,
+            status,
+            service:services (
+              id,
+              name,
+              category:categories (
+                id,
+                name
+              )
+            )
+          `,
+        )
+        .eq("status", "open")
+        .neq("customer_id", effectiveUserId)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        setError(
+          `Uygun işler yüklenirken bir hata oluştu: ${error.message}`,
+        );
+        setLoading(false);
+        return;
+      }
+
+      jobList = (data as unknown as Job[]) ?? [];
     }
-
-    const jobList = (data as unknown as Job[]) ?? [];
 
     setJobs(jobList);
-
     setSubmittedJobIds(submittedJobIdsFromDb);
 
     const offerMap: Record<
@@ -99,7 +221,7 @@ export default function JobsPage() {
       { price: number; status: string }
     > = {};
 
-    (providerOffers ?? []).forEach((offer) => {
+    providerOffers.forEach((offer) => {
       offerMap[offer.job_id] = {
         price: offer.price,
         status: offer.status,
@@ -110,80 +232,6 @@ export default function JobsPage() {
     setLoading(false);
   }
 
-  async function submitOffer(jobId: number) {
-    if (!price) {
-      setError("Lütfen teklif fiyatını gir.");
-      return;
-    }
-
-    setSending(true);
-    setError(null);
-
-    const supabase = createClient();
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      setError("Giriş yapmalısın.");
-      setSending(false);
-      return;
-    }
-
-    const offerPrice = Number(price);
-
-    const { error } = await supabase.from("offers").insert({
-      job_id: jobId,
-      provider_id: user.id,
-      price: offerPrice,
-      message: message || null,
-    });
-
-    if (error) {
-      if (error.code === "23505") {
-        setError("Bu işe daha önce teklif verdin.");
-      } else {
-        setError("Teklif gönderilirken bir hata oluştu.");
-      }
-
-      setSending(false);
-      return;
-    }
-
-    setSuccessJobId(jobId);
-
-    setSubmittedJobIds((current) =>
-      current.includes(jobId) ? current : [...current, jobId],
-    );
-
-    setSubmittedOffers((current) => ({
-      ...current,
-      [jobId]: {
-        price: offerPrice,
-        status: "pending",
-      },
-    }));
-
-    setSelectedJobId(null);
-    setPrice("");
-    setMessage("");
-    setSending(false);
-  }
-
-  function openOfferForm(jobId: number) {
-    setError(null);
-    setSuccessJobId(null);
-    setSelectedJobId(jobId);
-  }
-
-  function closeOfferForm() {
-    setSelectedJobId(null);
-    setPrice("");
-    setMessage("");
-    setError(null);
-  }
-
   useEffect(() => {
     loadJobs();
   }, []);
@@ -191,18 +239,23 @@ export default function JobsPage() {
   if (loading) {
     return (
       <main className="mx-auto max-w-6xl px-6 py-12">
-        <p className="text-zinc-500">
-          Uygun işler yükleniyor...
-        </p>
+        <p className="text-zinc-500">Uygun işler yükleniyor...</p>
       </main>
     );
   }
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-12">
+      {isPreview && (
+        <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          Kullanıcı önizlemesi aktif. Bu sayfadaki işler seçilen uzman
+          hesabına göre gösteriliyor.
+        </div>
+      )}
+
       <div className="mb-10">
         <p className="text-sm font-medium text-zinc-500">
-          Provider Paneli
+          Uzman Paneli
         </p>
 
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">
@@ -210,7 +263,8 @@ export default function JobsPage() {
         </h1>
 
         <p className="mt-2 text-zinc-500">
-          Hizmet kategorilerine uygun açık işleri burada görebilirsin.
+          Hizmetlerine ve çalışma bölgene uygun açık işleri burada
+          görebilirsin.
         </p>
       </div>
 
@@ -227,8 +281,8 @@ export default function JobsPage() {
           </h2>
 
           <p className="mt-2 text-sm text-zinc-500">
-            Profilindeki hizmet kategorilerini güncellediğinde daha fazla
-            iş görebilirsin.
+            Profilindeki hizmetleri ve çalışma bölgelerini
+            güncellediğinde daha fazla iş görebilirsin.
           </p>
         </div>
       ) : (
@@ -236,26 +290,55 @@ export default function JobsPage() {
           {jobs.map((job) => {
             const submittedOffer = submittedOffers[job.id];
 
+            const categoryName =
+              job.service?.category?.name?.trim() ?? "";
+
+            const serviceName =
+              job.service?.name?.trim() ?? "";
+
+            const showCategory =
+              categoryName !== "" &&
+              categoryName.toLocaleLowerCase("tr-TR") !==
+                serviceName.toLocaleLowerCase("tr-TR");
+
             return (
               <article
                 key={job.id}
-                className="rounded-2xl border border-zinc-200 bg-white p-6 transition hover:border-zinc-300"
+                onClick={(event) => {
+                  const target =
+                    event.target as HTMLElement;
+
+                  if (
+                    target.closest(
+                      "a, button",
+                    )
+                  ) {
+                    return;
+                  }
+
+                  router.push(
+                    `/jobs/${job.id}`,
+                  );
+                }}
+                className="cursor-pointer rounded-2xl border border-zinc-200 bg-white p-6 transition hover:border-zinc-300"
               >
                 <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="mb-3 flex flex-wrap gap-2">
-                      <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700">
-                        {job.category?.name ?? "Kategori"}
-                      </span>
+                      {showCategory && (
+                        <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700">
+                          {categoryName}
+                        </span>
+                      )}
 
-                      <span
-                        className={`rounded-full px-3 py-1 text-xs font-medium ${
-                          job.status === "open"
-                            ? "bg-green-50 text-green-700"
-                            : "bg-zinc-100 text-zinc-600"
-                        }`}
-                      >
-                        {job.status === "open" ? "Açık" : "Kapandı"}
+                      {serviceName && (
+                        <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700">
+                          {serviceName}
+                        </span>
+                      )}
+
+                      <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-medium text-green-700">
+                        Açık
                       </span>
                     </div>
 
@@ -270,7 +353,7 @@ export default function JobsPage() {
 
                   <div className="shrink-0 rounded-xl bg-zinc-50 px-5 py-4 sm:min-w-32">
                     <p className="text-xs text-zinc-500">
-                      Müşteri bütçesi
+                      Proje bütçesi
                     </p>
 
                     <p className="mt-1 text-lg font-semibold text-zinc-950">
@@ -322,15 +405,7 @@ export default function JobsPage() {
                 </div>
 
                 <div className="mt-6 border-t border-zinc-100 pt-5">
-                  {successJobId === job.id ? (
-                    <div className="rounded-xl bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
-                      ✓ Teklifin başarıyla gönderildi —{" "}
-                      {submittedOffer?.price.toLocaleString(
-                        "tr-TR",
-                      )}{" "}
-                      TL
-                    </div>
-                  ) : submittedJobIds.includes(job.id) ? (
+                  {submittedJobIds.includes(job.id) ? (
                     <div
                       className={`rounded-xl px-4 py-3 text-sm font-semibold ${
                         submittedOffer?.status === "accepted"
@@ -346,97 +421,23 @@ export default function JobsPage() {
                           ? "✕ Teklifin reddedildi"
                           : "✓ Teklif verdin"}{" "}
                       —{" "}
-                      {submittedOffer?.price.toLocaleString(
-                        "tr-TR",
-                      )}{" "}
-                      TL
+                      {submittedOffer?.price.toLocaleString("tr-TR")} TL
                     </div>
-                  ) : job.status !== "open" ? (
-                    <div className="rounded-xl bg-zinc-100 px-4 py-3 text-sm font-medium text-zinc-600">
-                      Bu ilan kapandı.
-                    </div>
-                  ) : selectedJobId === job.id ? (
-                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-5">
-                      <div className="mb-5">
-                        <h3 className="font-semibold">
-                          Bu işe teklif ver
-                        </h3>
-
-                        <p className="mt-1 text-sm text-zinc-500">
-                          Fiyatını ve müşteriye iletmek istediğin mesajı yaz.
-                        </p>
-                      </div>
-
-                      <div className="grid gap-4 sm:grid-cols-[180px_1fr]">
-                        <div>
-                          <label className="mb-2 block text-sm font-medium">
-                            Teklif fiyatı
-                          </label>
-
-                          <div className="flex items-center rounded-lg border border-zinc-300 bg-white">
-                            <input
-                              type="number"
-                              min="0"
-                              value={price}
-                              onChange={(e) =>
-                                setPrice(e.target.value)
-                              }
-                              placeholder="8000"
-                              className="w-full rounded-lg px-3 py-2.5 text-sm outline-none"
-                            />
-
-                            <span className="pr-3 text-sm text-zinc-500">
-                              TL
-                            </span>
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="mb-2 block text-sm font-medium">
-                            Mesaj
-                          </label>
-
-                          <textarea
-                            value={message}
-                            onChange={(e) =>
-                              setMessage(e.target.value)
-                            }
-                            placeholder="Müşteriye kendini ve teklifini kısaca anlat..."
-                            rows={3}
-                            className="w-full resize-none rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-zinc-500"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                        <button
-                          type="button"
-                          onClick={closeOfferForm}
-                          className="rounded-lg border border-zinc-300 bg-white px-5 py-2.5 text-sm font-medium"
-                        >
-                          Vazgeç
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => submitOffer(job.id)}
-                          disabled={sending}
-                          className="rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
-                        >
-                          {sending
-                            ? "Gönderiliyor..."
-                            : "Teklifi Gönder"}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
+                  ) : isPreview ? (
                     <button
                       type="button"
-                      onClick={() => openOfferForm(job.id)}
-                      className="rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800"
+                      disabled
+                      className="rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Önizlemede Teklif Verilemez
+                    </button>
+                  ) : (
+                    <Link
+                      href={`/jobs/${job.id}/offer`}
+                      className="inline-flex rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800"
                     >
                       Teklif Ver
-                    </button>
+                    </Link>
                   )}
                 </div>
               </article>
