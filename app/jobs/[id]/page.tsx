@@ -192,6 +192,24 @@ export default function JobDetailPage() {
       }
     }
 
+    let createdAt =
+      jobRow.created_at ??
+      jobRow.job_created_at ??
+      "";
+
+    if (!createdAt) {
+      const { data: jobCreatedAtRow } =
+        await supabase
+          .from("jobs")
+          .select("created_at")
+          .eq("id", Number(jobId))
+          .maybeSingle();
+
+      createdAt =
+        jobCreatedAtRow?.created_at ??
+        "";
+    }
+
     const normalizedJob: Job = {
       id: jobRow.id,
       title: jobRow.title,
@@ -206,10 +224,7 @@ export default function JobDetailPage() {
       status: jobRow.status,
       category_name: categoryName,
       service_name: serviceName,
-      created_at:
-        jobRow.created_at ??
-        jobRow.job_created_at ??
-        "",
+      created_at: createdAt,
       customer_id:
         jobRow.customer_id,
     };
@@ -781,7 +796,7 @@ export default function JobDetailPage() {
         <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
           <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
             <div className="border-b border-zinc-100 px-6 py-7 sm:px-8">
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center flex-wrap gap-2">
                 <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass()}`}>
                   {getStatusLabel()}
                 </span>
@@ -793,9 +808,14 @@ export default function JobDetailPage() {
                 )}
 
                 {!isOwner && (
-                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
-                    Uzman
-                  </span>
+                  <>
+                    <span className="text-zinc-300" aria-hidden="true">
+                      •
+                    </span>
+                    <span className="ml-0 inline-flex shrink-0 rounded-full border border-zinc-300 bg-white px-3 py-1 text-xs font-medium text-zinc-700">
+                      Uzman
+                    </span>
+                  </>
                 )}
 
                 {job.category_name && (
