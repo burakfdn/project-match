@@ -34,6 +34,16 @@ type ProviderServiceRow = {
   category_name: string | null;
 };
 
+type DiscoverProviderRow = {
+  user_id: string;
+  full_name: string | null;
+  experience_years: number | null;
+  city: string | null;
+  can_work_remote: boolean | null;
+  can_work_on_site: boolean | null;
+  bio: string | null;
+};
+
 type WorkSampleCategoryNested = {
   id: number;
   name: string;
@@ -99,6 +109,12 @@ export default function ProviderProfilePage() {
   const [error, setError] =
     useState("");
 
+  const [customerEnabled, setCustomerEnabled] =
+    useState(false);
+
+  const [currentUserId, setCurrentUserId] =
+    useState<string | null>(null);
+
   useEffect(() => {
     if (!providerId) {
       setError("Uzman bulunamadı.");
@@ -115,39 +131,61 @@ export default function ProviderProfilePage() {
     setWorkSamplesError("");
 
     const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    setCurrentUserId(user?.id ?? null);
+
+    if (user) {
+      const { data: permissionProfile } = await supabase
+        .from("profiles")
+        .select("customer_enabled")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      setCustomerEnabled(
+        Boolean(permissionProfile?.customer_enabled),
+      );
+    } else {
+      setCustomerEnabled(false);
+    }
+
+    const {
       data: profileData,
       error: profileError,
-    } = await supabase.rpc(
-      "customer_get_provider_profiles",
-      {
-        p_provider_ids: [providerId],
-      },
-    );
+    } = await supabase.rpc("discover_providers");
 
     if (profileError) {
       console.error(
-        "Provider profile error:",
+        "discover_providers error:",
         profileError,
       );
 
       setError(
-        "Uzman profili yüklenirken bir hata oluştu.",
+        profileError.message ||
+          "Uzman profili yüklenirken bir hata oluştu.",
       );
 
       setLoading(false);
       return;
     }
 
-    const profiles =
-      (profileData ?? []) as ProviderProfile[];
+    const profiles = (
+      Array.isArray(profileData)
+        ? profileData
+        : profileData
+          ? [profileData]
+          : []
+    ) as DiscoverProviderRow[];
 
-    const provider =
+    const providerRow =
       profiles.find(
         (item) =>
-          item.user_id === providerId,
+          String(item.user_id).toLowerCase() ===
+          providerId.toLowerCase(),
       ) ?? null;
 
-    if (!provider) {
+    if (!providerRow) {
       setError(
         "Bu uzmanın profili görüntülenemiyor.",
       );
@@ -156,28 +194,59 @@ export default function ProviderProfilePage() {
       return;
     }
 
+    const provider: ProviderProfile = {
+      user_id: providerRow.user_id,
+      full_name: providerRow.full_name,
+      bio: providerRow.bio,
+      experience_years: Number(
+        providerRow.experience_years ?? 0,
+      ),
+      city: providerRow.city,
+      can_work_remote: Boolean(
+        providerRow.can_work_remote,
+      ),
+      can_work_on_site: Boolean(
+        providerRow.can_work_on_site,
+      ),
+      location_type:
+        providerRow.can_work_remote &&
+        providerRow.can_work_on_site
+          ? "hybrid"
+          : providerRow.can_work_on_site
+            ? "on_site"
+            : "remote",
+    };
+
     const {
       data: servicesData,
       error: servicesError,
     } = await supabase.rpc(
-      "customer_get_provider_services",
-      {
-        p_provider_ids: [providerId],
-      },
+      "discover_provider_services",
     );
 
     if (servicesError) {
       console.error(
-        "Provider services error:",
+        "discover_provider_services error:",
         servicesError,
       );
     }
 
-    const serviceRows =
-      (servicesData ?? []) as ProviderServiceRow[];
+    const serviceRows = (
+      Array.isArray(servicesData)
+        ? servicesData
+        : servicesData
+          ? [servicesData]
+          : []
+    ) as ProviderServiceRow[];
+
+    const providerServiceRows = serviceRows.filter(
+      (service) =>
+        String(service.provider_id).toLowerCase() ===
+        providerId.toLowerCase(),
+    );
 
     const normalizedServices =
-      serviceRows.map((service) => ({
+      providerServiceRows.map((service) => ({
         id: service.service_id,
         name: service.service_name,
         category:
@@ -450,15 +519,22 @@ export default function ProviderProfilePage() {
   const groupedServices =
     getGroupedServices();
 
+  const isOwnProfile =
+    currentUserId !== null &&
+    currentUserId === profile.user_id;
+
+  const showCustomerActions =
+    customerEnabled && !isOwnProfile;
+
   return (
     <main className="min-h-screen bg-white px-6 py-12">
       <div className="mx-auto max-w-4xl">
         <button
           type="button"
-          onClick={() => router.back()}
+          onClick={() => router.push("/providers")}
           className="mb-8 text-sm font-medium text-zinc-500 transition hover:text-zinc-900"
         >
-          ← Tekliflere dön
+          ← Uzmanlara dön
         </button>
 
         <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
@@ -512,25 +588,28 @@ export default function ProviderProfilePage() {
 
           <div className="grid gap-8 px-6 py-8 sm:px-8 lg:grid-cols-[1fr_280px]">
             <div>
-              {profile.bio && (
-                <section>
-                  <h2 className="text-base font-semibold text-zinc-900">
-                    Hakkında
-                  </h2>
+              <section>
+                <h2 className="text-base font-semibold text-zinc-900">
+                  Hakkımda
+                </h2>
 
-                  <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-zinc-600">
-                    {profile.bio}
-                  </p>
-                </section>
-              )}
+                <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-zinc-600">
+                  {profile.bio?.trim() ||
+                    "Bu uzman henüz bir açıklama eklememiş."}
+                </p>
+              </section>
 
-              <section
-                className={
-                  profile.bio
-                    ? "mt-8"
-                    : ""
-                }
-              >
+              <section className="mt-8">
+                <h2 className="text-base font-semibold text-zinc-900">
+                  Çalışma şekli
+                </h2>
+
+                <p className="mt-3 text-sm text-zinc-600">
+                  {getWorkLabel()}
+                </p>
+              </section>
+
+              <section className="mt-8">
                 <h2 className="text-base font-semibold text-zinc-900">
                   Hizmetler
                 </h2>
@@ -578,7 +657,7 @@ export default function ProviderProfilePage() {
 
               <section className="mt-8">
                 <h2 className="text-base font-semibold text-zinc-900">
-                  Portfolyo
+                  Çalışmalarım
                 </h2>
 
                 {workSamplesError ? (
@@ -656,7 +735,43 @@ export default function ProviderProfilePage() {
               </section>
             </div>
 
-            <aside>
+            <aside className="space-y-4">
+              {showCustomerActions && (
+                <div className="rounded-xl border border-violet-200 bg-violet-50 p-5">
+                  <h2 className="text-sm font-semibold text-violet-900">
+                    Proje Sahibi
+                  </h2>
+
+                  <p className="mt-2 text-sm leading-6 text-violet-800">
+                    Bu uzmana doğrudan teklif
+                    gönderilmez. Mevcut ilanın
+                    üzerinden teklif alabilirsin.
+                  </p>
+
+                  <div className="mt-4 flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        router.push("/my-jobs")
+                      }
+                      className="rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800"
+                    >
+                      İlanlarımı Gör
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        router.push("/jobs/new")
+                      }
+                      className="rounded-lg border border-violet-200 bg-white px-4 py-2.5 text-sm font-medium text-violet-900 transition hover:bg-violet-100"
+                    >
+                      İlan oluştur
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-5">
                 <h2 className="text-sm font-semibold text-zinc-900">
                   Profil Özeti

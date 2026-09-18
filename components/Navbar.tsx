@@ -220,12 +220,21 @@ export default function Navbar() {
 
         <div className="flex items-center gap-5">
           {customerEnabled && (
-            <Link
-              href="/my-jobs"
-              className="hidden text-sm font-medium text-zinc-600 hover:text-zinc-950 sm:block"
-            >
-              İşlerim
-            </Link>
+            <>
+              <Link
+                href="/my-jobs"
+                className="hidden text-sm font-medium text-zinc-600 hover:text-zinc-950 sm:block"
+              >
+                İşlerim
+              </Link>
+
+              <Link
+                href="/providers"
+                className="hidden text-sm font-medium text-zinc-600 hover:text-zinc-950 sm:block"
+              >
+                Uzmanlar
+              </Link>
+            </>
           )}
 
           {providerEnabled && (

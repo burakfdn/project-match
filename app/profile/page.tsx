@@ -393,7 +393,7 @@ export default function ProfilePage() {
       error: profileError,
     } = await supabase
       .from("profiles")
-      .select("full_name, role")
+      .select("full_name, role, provider_enabled")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -411,28 +411,12 @@ export default function ProfilePage() {
       return;
     }
 
-    if (profile.role !== "provider") {
+    if (
+      !profile.provider_enabled &&
+      profile.role !== "provider"
+    ) {
       setError(
         "Bu sayfa yalnızca uzman kullanıcılar içindir.",
-      );
-      setLoading(false);
-      return;
-    }
-
-    const {
-      data: providerProfile,
-      error: providerError,
-    } = await supabase
-      .from("provider_profiles")
-      .select(
-        "bio, experience_years, city, can_work_remote, can_work_on_site",
-      )
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (providerError) {
-      setError(
-        `Uzman profili yüklenemedi: ${providerError.message}`,
       );
       setLoading(false);
       return;
@@ -472,6 +456,24 @@ export default function ProfilePage() {
     }
 
     const {
+      data: providerProfile,
+      error: providerError,
+    } = await supabase
+      .from("provider_profiles")
+      .select(
+        "bio, experience_years, city, can_work_remote, can_work_on_site",
+      )
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (providerError) {
+      console.error(
+        "Provider profile load error:",
+        providerError,
+      );
+    }
+
+    const {
       data: providerServices,
       error: providerServicesError,
     } = await supabase
@@ -480,11 +482,10 @@ export default function ProfilePage() {
       .eq("provider_id", user.id);
 
     if (providerServicesError) {
-      setError(
-        `Uzman hizmetlerin yüklenemedi: ${providerServicesError.message}`,
+      console.error(
+        "Provider services load error:",
+        providerServicesError,
       );
-      setLoading(false);
-      return;
     }
 
     setFullName(profile.full_name ?? "");
@@ -1123,7 +1124,14 @@ export default function ProfilePage() {
             </p>
 
             <div className="mt-6 space-y-8">
-              {categories.map((category) => {
+              {categories.length === 0 ||
+              services.length === 0 ? (
+                <p className="rounded-lg bg-zinc-50 px-4 py-3 text-sm text-zinc-500">
+                  Seçilebilir hizmet listesi yüklenemedi.
+                  Sayfayı yenileyerek tekrar dene.
+                </p>
+              ) : (
+              categories.map((category) => {
                 const categoryServices =
                   services.filter(
                     (service) =>
@@ -1187,7 +1195,8 @@ export default function ProfilePage() {
                     </ul>
                   </div>
                 );
-              })}
+              })
+              )}
             </div>
 
             {!isPreview &&
