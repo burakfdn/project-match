@@ -302,6 +302,8 @@ export default function JobOfferPage() {
       console.log("OFFER DEBUG SUBMIT STOPPED", {
         reason: "alreadyOffered",
       });
+      setError("Bu ilana zaten teklif verdin.");
+      return;
     }
 
     setSubmitting(true);

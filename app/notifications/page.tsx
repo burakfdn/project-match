@@ -7,12 +7,36 @@ import { createClient } from "@/lib/supabase/client";
 
 type Notification = {
   id: number;
+  type?: string | null;
   title: string;
   body: string | null;
   href: string | null;
   read_at: string | null;
   created_at: string;
 };
+
+function getNotificationHref(
+  notification: Notification,
+) {
+  const href = notification.href?.trim() ?? "";
+
+  if (href.startsWith("/")) {
+    return href;
+  }
+
+  if (notification.type === "offer_received") {
+    return "/my-jobs";
+  }
+
+  if (
+    notification.type === "offer_accepted" ||
+    notification.type === "offer_rejected"
+  ) {
+    return "/my-offers";
+  }
+
+  return null;
+}
 
 export default function NotificationsPage() {
   const router = useRouter();
@@ -120,8 +144,17 @@ export default function NotificationsPage() {
       }
     }
 
-    if (notification.href) {
-      router.push(notification.href);
+    const href = getNotificationHref(notification);
+
+    if (href) {
+      try {
+        router.push(href);
+      } catch {
+        setError(
+          "Bu bildirim artık geçerli bir sayfaya yönlendirmiyor.",
+        );
+        setMarkingId(null);
+      }
       return;
     }
 

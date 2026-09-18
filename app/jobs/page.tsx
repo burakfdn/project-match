@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -33,6 +33,25 @@ type ProviderOffer = {
   status: string;
 };
 
+type LocationFilter = "all" | "remote" | "on_site" | "hybrid";
+type JobSort = "newest" | "budget_high" | "budget_low";
+
+function parseBudgetInput(value: string) {
+  const trimmed = value.trim().replace(/\./g, "").replace(",", ".");
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const parsed = Number(trimmed);
+
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  return parsed;
+}
+
 export default function JobsPage() {
   const router = useRouter();
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -43,6 +62,14 @@ export default function JobsPage() {
     Record<number, { price: number; status: string }>
   >({});
   const [isPreview, setIsPreview] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [serviceFilter, setServiceFilter] = useState("");
+  const [locationFilter, setLocationFilter] =
+    useState<LocationFilter>("all");
+  const [budgetMin, setBudgetMin] = useState("");
+  const [budgetMax, setBudgetMax] = useState("");
+  const [sort, setSort] = useState<JobSort>("newest");
 
   async function loadJobs() {
     const supabase = createClient();
@@ -236,6 +263,153 @@ export default function JobsPage() {
     loadJobs();
   }, []);
 
+  const categories = useMemo(() => {
+    const names = new Set<string>();
+
+    jobs.forEach((job) => {
+      const name = job.service?.category?.name?.trim();
+
+      if (name) {
+        names.add(name);
+      }
+    });
+
+    return [...names].sort((a, b) =>
+      a.localeCompare(b, "tr"),
+    );
+  }, [jobs]);
+
+  const services = useMemo(() => {
+    const map = new Map<
+      number,
+      { id: number; name: string; categoryName: string }
+    >();
+
+    jobs.forEach((job) => {
+      if (!job.service) {
+        return;
+      }
+
+      const categoryName =
+        job.service.category?.name?.trim() ?? "";
+
+      if (
+        categoryFilter &&
+        categoryName !== categoryFilter
+      ) {
+        return;
+      }
+
+      map.set(job.service.id, {
+        id: job.service.id,
+        name: job.service.name,
+        categoryName,
+      });
+    });
+
+    return [...map.values()].sort((a, b) =>
+      a.name.localeCompare(b.name, "tr"),
+    );
+  }, [jobs, categoryFilter]);
+
+  const hasActiveFilters =
+    searchQuery.trim() !== "" ||
+    categoryFilter !== "" ||
+    serviceFilter !== "" ||
+    locationFilter !== "all" ||
+    budgetMin.trim() !== "" ||
+    budgetMax.trim() !== "" ||
+    sort !== "newest";
+
+  const filteredJobs = useMemo(() => {
+    const search = searchQuery.trim().toLocaleLowerCase("tr-TR");
+    const minBudget = parseBudgetInput(budgetMin);
+    const maxBudget = parseBudgetInput(budgetMax);
+
+    const next = jobs.filter((job) => {
+      if (
+        search &&
+        !job.title
+          .toLocaleLowerCase("tr-TR")
+          .includes(search)
+      ) {
+        return false;
+      }
+
+      if (categoryFilter) {
+        const categoryName =
+          job.service?.category?.name?.trim() ?? "";
+
+        if (categoryName !== categoryFilter) {
+          return false;
+        }
+      }
+
+      if (
+        serviceFilter &&
+        String(job.service?.id ?? "") !== serviceFilter
+      ) {
+        return false;
+      }
+
+      if (
+        locationFilter !== "all" &&
+        job.location_type !== locationFilter
+      ) {
+        return false;
+      }
+
+      if (minBudget !== null) {
+        if (job.budget === null || job.budget < minBudget) {
+          return false;
+        }
+      }
+
+      if (maxBudget !== null) {
+        if (job.budget === null || job.budget > maxBudget) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    if (sort === "budget_high") {
+      return [...next].sort(
+        (a, b) => (b.budget ?? -1) - (a.budget ?? -1),
+      );
+    }
+
+    if (sort === "budget_low") {
+      return [...next].sort(
+        (a, b) =>
+          (a.budget ?? Number.POSITIVE_INFINITY) -
+          (b.budget ?? Number.POSITIVE_INFINITY),
+      );
+    }
+
+    return next;
+  }, [
+    jobs,
+    searchQuery,
+    categoryFilter,
+    serviceFilter,
+    locationFilter,
+    budgetMin,
+    budgetMax,
+    sort,
+  ]);
+
+  function clearFilters() {
+    setSearchQuery("");
+    setCategoryFilter("");
+    setServiceFilter("");
+    setLocationFilter("all");
+    setBudgetMin("");
+    setBudgetMax("");
+    setSort("newest");
+  }
+
   if (loading) {
     return (
       <main className="mx-auto max-w-6xl px-6 py-12">
@@ -274,6 +448,190 @@ export default function JobsPage() {
         </div>
       )}
 
+      {jobs.length > 0 && (
+        <div className="mb-8 rounded-2xl border border-zinc-200 bg-white p-4 sm:p-5">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-zinc-700">
+                Arama
+              </span>
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(event) =>
+                  setSearchQuery(event.target.value)
+                }
+                placeholder="İlan başlığı"
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+              />
+            </label>
+
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-zinc-700">
+                Kategori
+              </span>
+              <select
+                value={categoryFilter}
+                onChange={(event) => {
+                  setCategoryFilter(event.target.value);
+                  setServiceFilter("");
+                }}
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+              >
+                <option value="">Tümü</option>
+                {categories.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-zinc-700">
+                Hizmet
+              </span>
+              <select
+                value={serviceFilter}
+                onChange={(event) =>
+                  setServiceFilter(event.target.value)
+                }
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+              >
+                <option value="">Tümü</option>
+                {services.map((service) => (
+                  <option
+                    key={service.id}
+                    value={String(service.id)}
+                  >
+                    {service.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="flex flex-col gap-1.5 text-sm sm:col-span-2 lg:col-span-1">
+              <span className="font-medium text-zinc-700">
+                Çalışma şekli
+              </span>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setLocationFilter("all")}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                    locationFilter === "all"
+                      ? "border-zinc-900 bg-zinc-900 text-white"
+                      : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                  }`}
+                >
+                  Tümü
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLocationFilter("remote")}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                    locationFilter === "remote"
+                      ? "border-zinc-900 bg-zinc-900 text-white"
+                      : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                  }`}
+                >
+                  Uzaktan
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLocationFilter("on_site")}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                    locationFilter === "on_site"
+                      ? "border-zinc-900 bg-zinc-900 text-white"
+                      : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                  }`}
+                >
+                  Yerinde
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLocationFilter("hybrid")}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                    locationFilter === "hybrid"
+                      ? "border-zinc-900 bg-zinc-900 text-white"
+                      : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                  }`}
+                >
+                  Hibrit
+                </button>
+              </div>
+            </div>
+
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-zinc-700">
+                Min. bütçe
+              </span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={budgetMin}
+                onChange={(event) =>
+                  setBudgetMin(event.target.value)
+                }
+                placeholder="Örn. 5000"
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+              />
+            </label>
+
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-zinc-700">
+                Maks. bütçe
+              </span>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={budgetMax}
+                onChange={(event) =>
+                  setBudgetMax(event.target.value)
+                }
+                placeholder="Örn. 20000"
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <label className="flex flex-col gap-1.5 text-sm sm:w-56">
+              <span className="font-medium text-zinc-700">
+                Sıralama
+              </span>
+              <select
+                value={sort}
+                onChange={(event) =>
+                  setSort(event.target.value as JobSort)
+                }
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+              >
+                <option value="newest">En yeni</option>
+                <option value="budget_high">Bütçesi yüksek</option>
+                <option value="budget_low">Bütçesi düşük</option>
+              </select>
+            </label>
+
+            <div className="flex flex-wrap items-center gap-3 sm:pt-6">
+              <p className="text-sm text-zinc-500">
+                {filteredJobs.length} / {jobs.length} ilan
+              </p>
+
+              {hasActiveFilters && (
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+                >
+                  Filtreleri temizle
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {jobs.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-zinc-300 p-12 text-center">
           <h2 className="text-lg font-medium">
@@ -285,9 +643,27 @@ export default function JobsPage() {
             güncellediğinde daha fazla iş görebilirsin.
           </p>
         </div>
+      ) : filteredJobs.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-zinc-300 p-12 text-center">
+          <h2 className="text-lg font-medium">
+            Bu filtrelere uyan iş yok.
+          </h2>
+
+          <p className="mt-2 text-sm text-zinc-500">
+            Arama veya filtreleri değiştirerek tekrar dene.
+          </p>
+
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="mt-5 rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+          >
+            Filtreleri temizle
+          </button>
+        </div>
       ) : (
         <div className="grid gap-5">
-          {jobs.map((job) => {
+          {filteredJobs.map((job) => {
             const submittedOffer = submittedOffers[job.id];
 
             const categoryName =

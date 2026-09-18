@@ -184,6 +184,12 @@ export default function MyJobsPage() {
   const [offerSort, setOfferSort] =
     useState<SortOption>("newest");
 
+  const [jobSearch, setJobSearch] =
+    useState("");
+
+  const [jobStatusFilter, setJobStatusFilter] =
+    useState<"all" | Job["status"]>("all");
+
   const [processingOfferId, setProcessingOfferId] =
     useState<number | null>(null);
 
@@ -1362,6 +1368,43 @@ export default function MyJobsPage() {
       selectedOffers,
     ]);
 
+  const visibleJobs = useMemo(() => {
+    const search = jobSearch.trim().toLocaleLowerCase("tr-TR");
+
+    return jobs.filter((job) => {
+      if (
+        jobStatusFilter !== "all" &&
+        job.status !== jobStatusFilter
+      ) {
+        return false;
+      }
+
+      if (
+        search &&
+        !job.title
+          .toLocaleLowerCase("tr-TR")
+          .includes(search)
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [jobs, jobSearch, jobStatusFilter]);
+
+  const hasActiveJobFilters =
+    jobSearch.trim() !== "" ||
+    jobStatusFilter !== "all" ||
+    offerFilter !== "all" ||
+    offerSort !== "newest";
+
+  function clearJobFilters() {
+    setJobSearch("");
+    setJobStatusFilter("all");
+    setOfferFilter("all");
+    setOfferSort("newest");
+  }
+
   if (loading) {
     return (
       <main className="min-h-screen bg-white px-6 py-12">
@@ -1413,7 +1456,105 @@ export default function MyJobsPage() {
             gelen teklifleri buradan
             yönetebilirsin.
           </p>
+
+          {jobs.length > 0 && (
+            <label className="mt-6 flex max-w-xl flex-col gap-1.5 text-sm">
+              <span className="font-medium text-zinc-700">
+                İlan ara
+              </span>
+              <input
+                type="search"
+                value={jobSearch}
+                onChange={(event) =>
+                  setJobSearch(event.target.value)
+                }
+                placeholder="İlan başlığına göre ara"
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+              />
+            </label>
+          )}
         </div>
+
+        {jobs.length > 0 && (
+          <div className="mb-8 rounded-2xl border border-zinc-200 bg-zinc-50 p-4 sm:p-5">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span className="font-medium text-zinc-700">
+                  İlan durumu
+                </span>
+                <select
+                  value={jobStatusFilter}
+                  onChange={(event) =>
+                    setJobStatusFilter(
+                      event.target.value as
+                        | "all"
+                        | Job["status"],
+                    )
+                  }
+                  className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+                >
+                  <option value="all">Tümü</option>
+                  <option value="open">Teklif alıyor</option>
+                  <option value="in_progress">Devam ediyor</option>
+                  <option value="completed">Tamamlandı</option>
+                  <option value="closed">Kapalı</option>
+                  <option value="cancelled">İptal edildi</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              {hasActiveJobFilters && (
+                <span className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white">
+                  Filtreler aktif
+                </span>
+              )}
+
+              {jobSearch.trim() && (
+                <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-600">
+                  Arama: {jobSearch.trim()}
+                </span>
+              )}
+
+              {jobStatusFilter !== "all" && (
+                <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-600">
+                  Durum: {getStatusLabel(jobStatusFilter)}
+                </span>
+              )}
+
+              {offerFilter !== "all" && (
+                <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-600">
+                  Teklif:{" "}
+                  {offerFilter === "pending"
+                    ? "Bekleyenler"
+                    : offerFilter === "accepted"
+                      ? "Kabul edilenler"
+                      : "Reddedilenler"}
+                </span>
+              )}
+
+              {offerSort !== "newest" && (
+                <span className="rounded-full bg-white px-3 py-1 text-xs font-medium text-zinc-600">
+                  Sıralama değişti
+                </span>
+              )}
+
+              <p className="text-sm text-zinc-500">
+                {visibleJobs.length} / {jobs.length} ilan
+              </p>
+
+              {hasActiveJobFilters && (
+                <button
+                  type="button"
+                  onClick={clearJobFilters}
+                  className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+                >
+                  Filtreleri temizle
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {error && (
           <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -1433,9 +1574,28 @@ export default function MyJobsPage() {
               almaya başlayabilirsin.
             </p>
           </div>
+        ) : visibleJobs.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 p-8 text-center">
+            <h2 className="text-lg font-medium text-zinc-900">
+              Bu filtrelere uyan ilan yok.
+            </h2>
+
+            <p className="mt-2 text-sm text-zinc-500">
+              Arama veya durum filtresini değiştirerek
+              tekrar dene.
+            </p>
+
+            <button
+              type="button"
+              onClick={clearJobFilters}
+              className="mt-5 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+            >
+              Filtreleri temizle
+            </button>
+          </div>
         ) : (
           <div className="space-y-8">
-            {jobs.map((job) => {
+            {visibleJobs.map((job) => {
               const allOffers =
                 offersByJob[job.id] ??
                 [];
@@ -1451,6 +1611,13 @@ export default function MyJobsPage() {
                     selectedOffers.includes(
                       offer.id,
                     ),
+                );
+
+              const acceptedOffer =
+                allOffers.find(
+                  (offer) =>
+                    offer.status ===
+                    "accepted",
                 );
 
               return (
@@ -1580,9 +1747,16 @@ export default function MyJobsPage() {
                         </p>
 
                         <p className="mt-1 text-sm text-blue-700">
-                          İş tamamlandığında
-                          aşağıdaki butonu
-                          kullanabilirsin.
+                          {acceptedOffer
+                            ? `${
+                                acceptedOffer.provider?.full_name?.trim() ||
+                                "İsimsiz Uzman"
+                              } — ${formatPrice(
+                                Number(
+                                  acceptedOffer.price,
+                                ),
+                              )}`
+                            : "İş tamamlandığında aşağıdaki butonu kullanabilirsin."}
                         </p>
                       </div>
 
@@ -1591,24 +1765,40 @@ export default function MyJobsPage() {
                           Önizlemede işlem yapılamaz
                         </span>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleCompleteJob(
-                              job.id,
-                            )
-                          }
-                          disabled={
-                            processingJobId ===
+                        <div className="flex flex-col gap-2 sm:items-end">
+                          {acceptedOffer && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleOpenConversation(
+                                  job.id,
+                                )
+                              }
+                              className="rounded-lg border border-blue-200 bg-white px-4 py-2 text-sm font-medium text-blue-800 transition hover:bg-blue-100"
+                            >
+                              Mesajlaş
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleCompleteJob(
+                                job.id,
+                              )
+                            }
+                            disabled={
+                              processingJobId ===
+                              job.id
+                            }
+                            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {processingJobId ===
                             job.id
-                          }
-                          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {processingJobId ===
-                          job.id
-                            ? "İşleniyor..."
-                            : "İşi tamamlandı olarak işaretle"}
-                        </button>
+                              ? "İşleniyor..."
+                              : "İşi tamamlandı olarak işaretle"}
+                          </button>
+                        </div>
                       )}
                     </div>
                   )}

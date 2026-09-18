@@ -77,6 +77,9 @@ export default function JobDetailPage() {
   const [openingConversation, setOpeningConversation] =
     useState(false);
 
+  const [completingJob, setCompletingJob] =
+    useState(false);
+
   const [previewUser, setPreviewUser] =
     useState<ReturnType<
       typeof getPreviewUser
@@ -113,6 +116,8 @@ export default function JobDetailPage() {
   }
 
   async function loadRealJob() {
+    setActionError("");
+
     const { data, error: jobError } =
       await supabase.rpc(
         "get_job_for_offer",
@@ -235,6 +240,11 @@ export default function JobDetailPage() {
       console.error(
         "Offers error:",
         offersError,
+      );
+
+      setActionError(
+        offersError.message ||
+          "Teklifler yüklenirken bir hata oluştu.",
       );
     }
 
@@ -421,6 +431,13 @@ export default function JobDetailPage() {
       return;
     }
 
+    if (job?.status !== "open") {
+      setActionError(
+        "Bu iş için artık teklif kabul edilemez.",
+      );
+      return;
+    }
+
     setProcessingOfferId(offerId);
     setProcessingAction("accept");
     setActionError("");
@@ -462,6 +479,13 @@ export default function JobDetailPage() {
       return;
     }
 
+    if (job?.status !== "open") {
+      setActionError(
+        "Bu iş için artık teklif reddedilemez.",
+      );
+      return;
+    }
+
     setProcessingOfferId(offerId);
     setProcessingAction("reject");
     setActionError("");
@@ -494,6 +518,48 @@ export default function JobDetailPage() {
 
     setProcessingOfferId(null);
     setProcessingAction(null);
+  }
+
+  async function handleCompleteJob() {
+    if (previewUser || !job) {
+      return;
+    }
+
+    if (job.status !== "in_progress") {
+      setActionError(
+        "Yalnızca devam eden işler tamamlanabilir.",
+      );
+      return;
+    }
+
+    setCompletingJob(true);
+    setActionError("");
+
+    const { error: completeError } =
+      await supabase.rpc(
+        "complete_my_job",
+        {
+          p_job_id: job.id,
+        },
+      );
+
+    if (completeError) {
+      console.error(
+        "Complete job error:",
+        completeError,
+      );
+
+      setActionError(
+        completeError.message ||
+          "İş tamamlanırken bir hata oluştu.",
+      );
+
+      setCompletingJob(false);
+      return;
+    }
+
+    await loadRealJob();
+    setCompletingJob(false);
   }
 
   async function handleOpenConversation() {
@@ -575,6 +641,22 @@ export default function JobDetailPage() {
     return "Tamamlandı";
   }
 
+  function getStatusClass() {
+    if (!job) {
+      return "bg-zinc-100 text-zinc-600";
+    }
+
+    if (job.status === "open") {
+      return "bg-emerald-50 text-emerald-700";
+    }
+
+    if (job.status === "in_progress") {
+      return "bg-blue-50 text-blue-700";
+    }
+
+    return "bg-zinc-100 text-zinc-600";
+  }
+
   function formatPrice(
     value: number | null,
   ) {
@@ -653,7 +735,8 @@ export default function JobDetailPage() {
 
   const canManageOffers =
     !isPreview &&
-    currentUserId === job.customer_id;
+    currentUserId === job.customer_id &&
+    job.status === "open";
 
   const myOffer =
     currentUserId && !isOwner
@@ -663,6 +746,18 @@ export default function JobDetailPage() {
             currentUserId,
         )
       : undefined;
+
+  const acceptedOffer = offers.find(
+    (offer) => offer.status === "accepted",
+  );
+
+  const acceptedProviderName =
+    acceptedOffer
+      ? providers[
+          acceptedOffer.provider_id
+        ]?.full_name?.trim() ||
+        "İsimsiz Uzman"
+      : null;
 
   return (
     <main className="min-h-screen bg-zinc-50 px-6 py-10">
@@ -687,9 +782,21 @@ export default function JobDetailPage() {
           <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
             <div className="border-b border-zinc-100 px-6 py-7 sm:px-8">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700">
+                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusClass()}`}>
                   {getStatusLabel()}
                 </span>
+
+                {isOwner && (
+                  <span className="rounded-full bg-violet-50 px-3 py-1 text-xs font-medium text-violet-700">
+                    Proje Sahibi
+                  </span>
+                )}
+
+                {!isOwner && (
+                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
+                    Uzman
+                  </span>
+                )}
 
                 {job.category_name && (
                   <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-600">
@@ -708,6 +815,57 @@ export default function JobDetailPage() {
                   job.created_at,
                 )}
               </p>
+
+              <dl className="mt-6 grid gap-4 sm:grid-cols-2">
+                {job.service_name && (
+                  <div>
+                    <dt className="text-xs text-zinc-400">
+                      Hizmet
+                    </dt>
+                    <dd className="mt-1 text-sm font-medium text-zinc-800">
+                      {job.service_name}
+                    </dd>
+                  </div>
+                )}
+
+                <div>
+                  <dt className="text-xs text-zinc-400">
+                    Çalışma şekli
+                  </dt>
+                  <dd className="mt-1 text-sm font-medium text-zinc-800">
+                    {getLocationLabel()}
+                  </dd>
+                </div>
+
+                {job.city && (
+                  <div>
+                    <dt className="text-xs text-zinc-400">
+                      Konum
+                    </dt>
+                    <dd className="mt-1 text-sm font-medium text-zinc-800">
+                      {job.city}
+                    </dd>
+                  </div>
+                )}
+
+                <div>
+                  <dt className="text-xs text-zinc-400">
+                    Bütçe
+                  </dt>
+                  <dd className="mt-1 text-sm font-medium text-zinc-800">
+                    {formatPrice(job.budget)}
+                  </dd>
+                </div>
+
+                <div>
+                  <dt className="text-xs text-zinc-400">
+                    Son tarih
+                  </dt>
+                  <dd className="mt-1 text-sm font-medium text-zinc-800">
+                    {formatDate(job.deadline)}
+                  </dd>
+                </div>
+              </dl>
             </div>
 
             <div className="px-6 py-7 sm:px-8">
@@ -810,6 +968,85 @@ export default function JobDetailPage() {
                     )}
                   </div>
                 )}
+
+              {isOwner &&
+                acceptedOffer && (
+                  <div className="mt-8 rounded-xl border border-emerald-200 bg-emerald-50 p-5">
+                    <h2 className="text-sm font-semibold text-emerald-900">
+                      Kabul edilen uzman
+                    </h2>
+
+                    <p className="mt-2 text-sm font-medium text-emerald-900">
+                      {acceptedProviderName}
+                    </p>
+
+                    <p className="mt-1 text-lg font-semibold text-emerald-950">
+                      {formatPrice(
+                        acceptedOffer.price,
+                      )}
+                    </p>
+
+                    {!isPreview && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleOpenConversation()
+                        }
+                        disabled={
+                          openingConversation
+                        }
+                        className="mt-4 rounded-xl bg-zinc-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {openingConversation
+                          ? "Açılıyor..."
+                          : "Mesajlaş"}
+                      </button>
+                    )}
+                  </div>
+                )}
+
+              {isOwner &&
+                !isPreview &&
+                job.status ===
+                  "in_progress" && (
+                  <div className="mt-8 rounded-xl border border-blue-100 bg-blue-50 p-5">
+                    <h2 className="text-sm font-semibold text-blue-900">
+                      İş devam ediyor
+                    </h2>
+
+                    <p className="mt-2 text-sm leading-6 text-blue-700">
+                      İş bittiğinde tamamlandı
+                      olarak işaretleyebilirsin.
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleCompleteJob()
+                      }
+                      disabled={
+                        completingJob
+                      }
+                      className="mt-4 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {completingJob
+                        ? "İşleniyor..."
+                        : "İşi tamamlandı olarak işaretle"}
+                    </button>
+                  </div>
+                )}
+              {job.status === "completed" && (
+                <div className="mt-8 rounded-xl border border-emerald-100 bg-emerald-50 p-5">
+                  <h2 className="text-sm font-semibold text-emerald-900">
+                    Bu iş tamamlandı
+                  </h2>
+
+                  <p className="mt-2 text-sm leading-6 text-emerald-700">
+                    İlan kapanmış durumda. Yeni teklif
+                    alınmıyor.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -868,7 +1105,7 @@ export default function JobDetailPage() {
               </div>
             </div>
 
-            {offers.length > 0 && (
+            {(isOwner || offers.length > 0) && (
               <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
                 <h2 className="text-sm font-semibold text-zinc-900">
                   Gelen teklifler
@@ -885,7 +1122,13 @@ export default function JobDetailPage() {
                 )}
 
                 <div className="mt-5 space-y-4">
-                  {offers.map(
+                  {offers.length === 0 ? (
+                    <p className="text-sm text-zinc-500">
+                      Bu ilana henüz teklif
+                      gelmedi.
+                    </p>
+                  ) : (
+                  offers.map(
                     (offer) => {
                       const provider =
                         providers[
@@ -934,9 +1177,29 @@ export default function JobDetailPage() {
 
                           {offer.status ===
                             "accepted" && (
-                            <p className="mt-3 text-xs font-medium text-emerald-700">
-                              Kabul edildi
-                            </p>
+                            <div className="mt-3">
+                              <p className="text-xs font-medium text-emerald-700">
+                                Kabul edildi
+                              </p>
+
+                              {isOwner &&
+                                !isPreview && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleOpenConversation()
+                                    }
+                                    disabled={
+                                      openingConversation
+                                    }
+                                    className="mt-3 rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {openingConversation
+                                      ? "Açılıyor..."
+                                      : "Mesajlaş"}
+                                  </button>
+                                )}
+                            </div>
                           )}
 
                           {offer.status ===
@@ -992,6 +1255,7 @@ export default function JobDetailPage() {
                         </div>
                       );
                     },
+                  )
                   )}
                 </div>
               </div>

@@ -601,9 +601,14 @@ export default function MyOffersPage() {
                         </div>
                       )}
 
-                    {offer.status === "accepted" &&
-                      (job.status === "in_progress" ||
-                        job.status === "completed") && (
+                    {offer.status === "rejected" && (
+                      <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-600">
+                        Bu teklif reddedildi. Aynı işe tekrar
+                        teklif verilemez.
+                      </div>
+                    )}
+
+                    {offer.status === "accepted" && (
                         <button
                           type="button"
                           onClick={() =>
