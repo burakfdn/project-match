@@ -802,9 +802,14 @@ export default function JobDetailPage() {
                 </span>
 
                 {isOwner && (
-                  <span className="rounded-full bg-violet-50 px-3 py-1 text-xs font-medium text-violet-700">
-                    Proje Sahibi
-                  </span>
+                  <>
+                    <span className="text-zinc-300" aria-hidden="true">
+                      •
+                    </span>
+                    <span className="rounded-full bg-violet-50 px-3 py-1 text-xs font-medium text-violet-700">
+                      Proje Sahibi
+                    </span>
+                  </>
                 )}
 
                 {!isOwner && (
