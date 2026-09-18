@@ -181,67 +181,118 @@ export default function HomePage() {
             </p>
 
             <h1 className="mt-4 text-5xl font-semibold tracking-tight text-zinc-950 sm:text-6xl">
-              Doğru iş,
-              <br />
-              doğru profesyonelle.
+              Doğru uzmanı, doğru projeyle buluştur.
             </h1>
 
             <p className="mt-6 max-w-2xl text-lg leading-8 text-zinc-600">
-              İşini yapabilecek profesyonellerden teklif al.
-              Yeteneklerine uygun işleri keşfet ve gereksiz
-              teklif kalabalığından kurtul.
+              İhtiyacını yayınla. Hizmetlerinle eşleşen
+              uzmanlardan teklif al.
             </p>
 
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <div className="mt-8 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
               <Link
                 href="/signup"
-                className="rounded-lg bg-black px-6 py-3 text-center text-sm font-medium text-white hover:bg-zinc-800"
+                className="inline-flex w-full items-center justify-center rounded-lg bg-black px-6 py-3 text-center text-sm font-medium text-white hover:bg-zinc-800 sm:w-auto"
               >
-                Ücretsiz Başla
+                Proje Sahibi Olarak Başla
               </Link>
 
               <Link
-                href="/login"
-                className="rounded-lg border border-zinc-300 px-6 py-3 text-center text-sm font-medium hover:bg-zinc-50"
+                href="/signup"
+                className="inline-flex w-full items-center justify-center rounded-lg border border-zinc-300 bg-white px-6 py-3 text-center text-sm font-medium hover:bg-zinc-50 sm:w-auto"
               >
-                Giriş Yap
+                Uzman Olarak Başla
               </Link>
             </div>
           </div>
         </section>
 
         <section className="border-y border-zinc-200 bg-zinc-50">
-          <div className="mx-auto grid max-w-6xl gap-8 px-6 py-16 sm:grid-cols-3">
-            <div>
-              <h2 className="font-semibold">
-                Doğru eşleşme
-              </h2>
+          <div className="mx-auto max-w-6xl px-6 py-16">
+            <h2 className="text-xl font-semibold tracking-tight">
+              Nasıl çalışır?
+            </h2>
+
+            <div className="mt-8 grid gap-8 sm:grid-cols-3">
+              <div>
+                <p className="text-sm font-medium text-zinc-500">
+                  1
+                </p>
+
+                <h3 className="mt-2 font-semibold">
+                  Projeni yayınla
+                </h3>
+
+                <p className="mt-2 text-sm leading-6 text-zinc-600">
+                  İhtiyacını, bütçeni ve çalışma şeklini belirt.
+                </p>
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-zinc-500">
+                  2
+                </p>
+
+                <h3 className="mt-2 font-semibold">
+                  Uygun uzmanlar görsün
+                </h3>
+
+                <p className="mt-2 text-sm leading-6 text-zinc-600">
+                  Projen, hizmetleriyle ve çalışma koşullarıyla
+                  eşleşen uzmanların karşısına çıkar.
+                </p>
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-zinc-500">
+                  3
+                </p>
+
+                <h3 className="mt-2 font-semibold">
+                  Teklifleri değerlendir
+                </h3>
+
+                <p className="mt-2 text-sm leading-6 text-zinc-600">
+                  Gelen teklifleri incele, uzmanla mesajlaş ve
+                  işi tamamla.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="mx-auto max-w-6xl px-6 py-16">
+          <div className="max-w-3xl">
+            <h2 className="text-2xl font-semibold tracking-tight">
+              100 teklif değil. Doğru teklifler.
+            </h2>
+
+            <p className="mt-4 text-sm leading-6 text-zinc-600 sm:text-base">
+              Project Match, herkese aynı ilanları göstermek
+              yerine uzmanlık ve çalışma koşullarına göre uygun
+              projeleri öne çıkarır.
+            </p>
+          </div>
+
+          <div className="mt-10 grid gap-8 sm:grid-cols-2">
+            <div className="rounded-2xl border border-zinc-200 bg-white p-7">
+              <h3 className="font-semibold">
+                Proje Sahipleri için
+              </h3>
 
               <p className="mt-2 text-sm leading-6 text-zinc-600">
-                İşler, hizmet kategorilerine göre uygun
-                profesyonellerle eşleşir.
+                İhtiyacını anlat, uygun uzmanlardan teklif al.
               </p>
             </div>
 
-            <div>
-              <h2 className="font-semibold">
-                Daha az gürültü
-              </h2>
+            <div className="rounded-2xl border border-zinc-200 bg-white p-7">
+              <h3 className="font-semibold">
+                Uzmanlar için
+              </h3>
 
               <p className="mt-2 text-sm leading-6 text-zinc-600">
-                Herkes her işe teklif veremez. Sadece uygun
-                kişiler öne çıkar.
-              </p>
-            </div>
-
-            <div>
-              <h2 className="font-semibold">
-                Basit süreç
-              </h2>
-
-              <p className="mt-2 text-sm leading-6 text-zinc-600">
-                İşi oluştur, uygun teklifleri değerlendir ve
-                profesyonelini seç.
+                Hizmetlerinle eşleşen projeleri keşfet, gerçekten
+                yapabileceğin işlere teklif ver.
               </p>
             </div>
           </div>
