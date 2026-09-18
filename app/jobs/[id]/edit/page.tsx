@@ -101,22 +101,6 @@ const CITIES = [
   "Zonguldak",
 ];
 
-function toDatetimeLocal(value: string | null) {
-  if (!value) {
-    return "";
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  const pad = (part: number) => String(part).padStart(2, "0");
-
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
 export default function EditJobPage() {
   const params = useParams();
   const router = useRouter();
@@ -134,7 +118,9 @@ export default function EditJobPage() {
   const [budget, setBudget] = useState("");
   const [city, setCity] = useState("");
   const [locationType, setLocationType] = useState("remote");
-  const [deadline, setDeadline] = useState("");
+  const [existingDeadline, setExistingDeadline] = useState<
+    string | null
+  >(null);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -253,7 +239,7 @@ export default function EditJobPage() {
       );
       setLocationType(job.location_type ?? "remote");
       setCity(job.city ?? "");
-      setDeadline(toDatetimeLocal(job.deadline));
+      setExistingDeadline(job.deadline ?? null);
       setCategoryId(
         service?.category_id ? String(service.category_id) : "",
       );
@@ -313,15 +299,6 @@ export default function EditJobPage() {
       return;
     }
 
-    if (deadline) {
-      const deadlineDate = new Date(deadline);
-
-      if (deadlineDate <= new Date()) {
-        setError("Son teklif tarihi gelecekte olmalıdır.");
-        return;
-      }
-    }
-
     setSaving(true);
     setError(null);
 
@@ -336,9 +313,7 @@ export default function EditJobPage() {
         p_budget: budget ? Number(budget) : null,
         p_city: locationType === "remote" ? null : city || null,
         p_location_type: locationType,
-        p_deadline: deadline
-          ? new Date(deadline).toISOString()
-          : null,
+        p_deadline: existingDeadline,
         p_service_id: Number(serviceId),
       },
     );
@@ -589,23 +564,6 @@ export default function EditJobPage() {
               </select>
             </div>
           )}
-
-          <div>
-            <label
-              htmlFor="deadline"
-              className="text-sm font-medium"
-            >
-              Son teklif tarihi
-            </label>
-
-            <input
-              id="deadline"
-              type="datetime-local"
-              value={deadline}
-              onChange={(event) => setDeadline(event.target.value)}
-              className="mt-2 w-full rounded-lg border border-zinc-300 px-3 py-2.5 outline-none focus:border-zinc-500"
-            />
-          </div>
 
           {error && (
             <div

@@ -114,7 +114,6 @@ export default function NewJobPage() {
   const [budget, setBudget] = useState("");
   const [city, setCity] = useState("");
   const [locationType, setLocationType] = useState("remote");
-  const [deadline, setDeadline] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -222,15 +221,6 @@ export default function NewJobPage() {
       return;
     }
 
-    if (deadline) {
-      const deadlineDate = new Date(deadline);
-
-      if (deadlineDate <= new Date()) {
-        setError("Son teklif tarihi gelecekte olmalıdır.");
-        return;
-      }
-    }
-
     setSaving(true);
     setError(null);
 
@@ -249,10 +239,6 @@ export default function NewJobPage() {
       city: locationType === "remote" ? null : city || null,
 
       location_type: locationType,
-
-      deadline: deadline
-        ? new Date(deadline).toISOString()
-        : null,
     });
 
     if (error) {
@@ -485,28 +471,6 @@ export default function NewJobPage() {
               </select>
             </div>
           )}
-
-          <div>
-            <label
-              htmlFor="deadline"
-              className="text-sm font-medium"
-            >
-              Son teklif tarihi
-            </label>
-
-            <input
-              id="deadline"
-              type="datetime-local"
-              value={deadline}
-              onChange={(e) => setDeadline(e.target.value)}
-              className="mt-2 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2.5 outline-none focus:border-zinc-500"
-            />
-
-            <p className="mt-1.5 text-xs text-zinc-500">
-              İstersen tekliflerin son kabul edileceği tarihi
-              belirleyebilirsin.
-            </p>
-          </div>
 
           {error && (
             <div

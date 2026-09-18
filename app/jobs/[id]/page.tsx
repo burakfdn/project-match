@@ -13,7 +13,6 @@ type Job = {
   budget: number | null;
   city: string | null;
   location_type: "remote" | "on_site" | "hybrid";
-  deadline: string | null;
   status: "open" | "in_progress" | "completed";
   category_name: string | null;
   service_name: string | null;
@@ -219,8 +218,6 @@ export default function JobDetailPage() {
       city: jobRow.city,
       location_type:
         jobRow.location_type,
-      deadline:
-        jobRow.deadline,
       status: jobRow.status,
       category_name: categoryName,
       service_name: serviceName,
@@ -276,6 +273,27 @@ export default function JobDetailPage() {
         ),
         user?.id ?? null,
       );
+    }
+
+    const viewerId = user?.id ?? null;
+    const isJobOwner =
+      viewerId === normalizedJob.customer_id;
+    const hasAcceptedOffer = normalizedOffers.some(
+      (offer) =>
+        offer.provider_id === viewerId &&
+        offer.status === "accepted",
+    );
+
+    if (
+      !isJobOwner &&
+      normalizedJob.status !== "open" &&
+      !hasAcceptedOffer
+    ) {
+      setJob(null);
+      setOffers([]);
+      setError("Bu ilan görüntülenemiyor.");
+      setLoading(false);
+      return;
     }
 
     setLoading(false);
@@ -342,8 +360,6 @@ export default function JobDetailPage() {
       city: row.job_city,
       location_type:
         row.job_location_type,
-      deadline:
-        row.job_deadline,
       status:
         row.job_status,
       category_name:
@@ -881,15 +897,6 @@ export default function JobDetailPage() {
                     {formatPrice(job.budget)}
                   </dd>
                 </div>
-
-                <div>
-                  <dt className="text-xs text-zinc-400">
-                    Son tarih
-                  </dt>
-                  <dd className="mt-1 text-sm font-medium text-zinc-800">
-                    {formatDate(job.deadline)}
-                  </dd>
-                </div>
               </dl>
             </div>
 
@@ -1115,18 +1122,6 @@ export default function JobDetailPage() {
                     </p>
                   </div>
                 )}
-
-                <div>
-                  <p className="text-xs text-zinc-400">
-                    Son tarih
-                  </p>
-
-                  <p className="mt-1 text-sm font-medium text-zinc-800">
-                    {formatDate(
-                      job.deadline,
-                    )}
-                  </p>
-                </div>
               </div>
             </div>
 

@@ -18,7 +18,6 @@ type Job = {
   budget: number | null;
   city: string | null;
   location_type: "remote" | "on_site" | "hybrid";
-  deadline: string | null;
   status:
     | "open"
     | "closed"
@@ -416,8 +415,6 @@ export default function MyJobsPage() {
           city: row.job_city,
           location_type:
             row.job_location_type,
-          deadline:
-            row.job_deadline,
           status:
             row.job_status,
           created_at:
@@ -597,7 +594,6 @@ export default function MyJobsPage() {
         budget,
         city,
         location_type,
-        deadline,
         status,
         created_at,
         service:services (
@@ -1494,7 +1490,7 @@ export default function MyJobsPage() {
                   className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
                 >
                   <option value="all">Tümü</option>
-                  <option value="open">Teklif alıyor</option>
+                  <option value="open">Açık</option>
                   <option value="in_progress">Devam ediyor</option>
                   <option value="completed">Tamamlandı</option>
                   <option value="closed">Kapalı</option>

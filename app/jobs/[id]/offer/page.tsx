@@ -14,7 +14,6 @@ type Job = {
   budget: number | null;
   city: string | null;
   location_type: "remote" | "on_site" | "hybrid";
-  deadline: string | null;
   status: "open" | "in_progress" | "completed";
   service_name: string | null;
 };
@@ -140,8 +139,6 @@ export default function JobOfferPage() {
       city: jobRow.city,
       location_type:
         jobRow.location_type,
-      deadline:
-        jobRow.deadline,
       status:
         jobRow.status,
       service_name:
@@ -156,6 +153,16 @@ export default function JobOfferPage() {
       userData.user?.id ?? null;
 
     setCurrentUserId(userId);
+
+    if (
+      jobRow.status !== "open" &&
+      jobRow.customer_id !== userId
+    ) {
+      setJob(null);
+      setError("Bu ilan görüntülenemiyor.");
+      setLoading(false);
+      return;
+    }
 
     if (userId) {
       const { data: existingOffer } =
@@ -209,23 +216,6 @@ export default function JobOfferPage() {
     }
 
     return "Uzaktan + Yerinde";
-  }
-
-  function formatDate(
-    value: string | null,
-  ) {
-    if (!value) {
-      return "Belirtilmemiş";
-    }
-
-    return new Intl.DateTimeFormat(
-      "tr-TR",
-      {
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-      },
-    ).format(new Date(value));
   }
 
   async function submitOffer(
@@ -693,18 +683,6 @@ export default function JobOfferPage() {
                     </p>
                   </div>
                 )}
-
-                <div>
-                  <p className="text-xs text-zinc-400">
-                    Son tarih
-                  </p>
-
-                  <p className="mt-1 text-sm font-medium text-zinc-800">
-                    {formatDate(
-                      job.deadline,
-                    )}
-                  </p>
-                </div>
               </div>
             </div>
 

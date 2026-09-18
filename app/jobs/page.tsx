@@ -15,7 +15,6 @@ type Job = {
   budget: number | null;
   city: string | null;
   location_type: string;
-  deadline: string | null;
   status: string;
   service: {
     id: number;
@@ -169,7 +168,6 @@ export default function JobsPage() {
           budget: number | null;
           city: string | null;
           location_type: string;
-          deadline: string | null;
           status: string;
           service_id: number;
           service_name: string;
@@ -184,7 +182,6 @@ export default function JobsPage() {
         budget: job.budget,
         city: job.city,
         location_type: job.location_type,
-        deadline: job.deadline,
         status: job.status,
         service: {
           id: job.service_id,
@@ -213,7 +210,6 @@ export default function JobsPage() {
             budget,
             city,
             location_type,
-            deadline,
             status,
             service:services (
               id,
@@ -764,20 +760,6 @@ export default function JobsPage() {
                           : "Hibrit"}
                     </p>
                   </div>
-
-                  {job.deadline && (
-                    <div>
-                      <p className="text-xs text-zinc-400">
-                        Son tarih
-                      </p>
-
-                      <p className="mt-1 text-sm font-medium">
-                        {new Date(
-                          job.deadline,
-                        ).toLocaleDateString("tr-TR")}
-                      </p>
-                    </div>
-                  )}
                 </div>
 
                 <div className="mt-6 border-t border-zinc-100 pt-5">

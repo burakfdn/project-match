@@ -22,7 +22,6 @@ type Offer = {
     budget: number | null;
     city: string | null;
     location_type: "remote" | "on_site" | "hybrid";
-    deadline: string | null;
     status:
       | "open"
       | "closed"
@@ -268,7 +267,6 @@ export default function MyOffersPage() {
             budget: row.job_budget,
             city: row.job_city,
             location_type: row.job_location_type,
-            deadline: row.job_deadline,
             status: row.job_status,
             created_at: row.job_created_at,
             service: row.service_id
@@ -342,7 +340,6 @@ export default function MyOffersPage() {
           budget: row.job_budget,
           city: row.job_city,
           location_type: row.job_location_type,
-          deadline: row.job_deadline,
           status: row.job_status,
           created_at: row.job_created_at,
           service: row.service_id
@@ -479,6 +476,12 @@ export default function MyOffersPage() {
                             </span>
                           )}
 
+                          {job.service?.category && job.service && (
+                            <span className="text-zinc-300" aria-hidden="true">
+                              •
+                            </span>
+                          )}
+
                           {job.service && (
                             <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
                               {job.service.name}
@@ -569,13 +572,6 @@ export default function MyOffersPage() {
                       </div>
 
                       <div className="flex flex-wrap items-center gap-3">
-                        <span>
-                          Son tarih:{" "}
-                          <span className="font-medium text-gray-700">
-                            {formatDate(job.deadline)}
-                          </span>
-                        </span>
-
                         <span
                           className={`rounded-full px-3 py-1 text-xs font-semibold ${getJobStatusClass(
                             job.status,
