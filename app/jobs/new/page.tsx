@@ -99,6 +99,12 @@ const CITIES = [
   "Zonguldak",
 ];
 
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    value,
+  );
+}
+
 export default function NewJobPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -119,6 +125,15 @@ export default function NewJobPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [targetProviderName, setTargetProviderName] =
+    useState<string | null>(null);
+
+  const [targetProviderId, setTargetProviderId] =
+    useState<string | null>(null);
+
+  const [targetProviderMissing, setTargetProviderMissing] =
+    useState(false);
+
   const availableServices = services.filter(
     (service) => service.category_id === Number(categoryId),
   );
@@ -132,7 +147,8 @@ export default function NewJobPage() {
       } = await supabase.auth.getUser();
 
       if (!user) {
-        window.location.href = "/login";
+        const returnPath = `${window.location.pathname}${window.location.search}`;
+        window.location.href = `/login?next=${encodeURIComponent(returnPath)}`;
         return;
       }
 
@@ -169,6 +185,58 @@ export default function NewJobPage() {
 
       setCategories(categoriesResult.data ?? []);
       setServices(servicesResult.data ?? []);
+
+      const providerIdParam =
+        new URLSearchParams(window.location.search)
+          .get("provider_id")
+          ?.trim() ?? "";
+
+      if (!providerIdParam) {
+        setTargetProviderId(null);
+        setTargetProviderName(null);
+        setTargetProviderMissing(false);
+      } else if (!isUuid(providerIdParam)) {
+        setTargetProviderId(null);
+        setTargetProviderName(null);
+        setTargetProviderMissing(true);
+        setError("Seçilen uzman bulunamadı.");
+      } else {
+        setTargetProviderId(providerIdParam);
+        setTargetProviderMissing(false);
+
+        const { data: profileData, error: providerLookupError } =
+          await supabase.rpc("discover_providers");
+
+        if (providerLookupError) {
+          console.error(
+            "Target provider lookup error:",
+            providerLookupError,
+          );
+          setTargetProviderName("İsimsiz Uzman");
+        } else {
+          const profiles = (
+            Array.isArray(profileData)
+              ? profileData
+              : profileData
+                ? [profileData]
+                : []
+          ) as Array<{
+            user_id?: string;
+            full_name?: string | null;
+          }>;
+
+          const matchedProvider = profiles.find(
+            (item) =>
+              String(item.user_id ?? "").toLowerCase() ===
+              providerIdParam.toLowerCase(),
+          );
+
+          setTargetProviderName(
+            matchedProvider?.full_name?.trim() ||
+              "İsimsiz Uzman",
+          );
+        }
+      }
 
       setLoading(false);
     }
@@ -221,6 +289,21 @@ export default function NewJobPage() {
       return;
     }
 
+    if (targetProviderMissing) {
+      setError("Seçilen uzman bulunamadı.");
+      return;
+    }
+
+    const providerIdFromUrl =
+      new URLSearchParams(window.location.search)
+        .get("provider_id")
+        ?.trim() ?? "";
+
+    if (providerIdFromUrl && !targetProviderId) {
+      setError("Seçilen uzman bulunamadı.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -239,6 +322,8 @@ export default function NewJobPage() {
       city: locationType === "remote" ? null : city || null,
 
       location_type: locationType,
+
+      target_provider_id: targetProviderId,
     });
 
     if (error) {
@@ -277,6 +362,17 @@ export default function NewJobPage() {
             koşullarına uygun profesyoneller ilanını görebilecek.
           </p>
         </div>
+
+        {targetProviderName ? (
+          <div className="mt-6 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
+            <p className="text-sm text-zinc-500">
+              Bu uzman için proje oluşturuyorsun
+            </p>
+            <p className="mt-1 text-sm font-medium text-zinc-900">
+              {targetProviderName}
+            </p>
+          </div>
+        ) : null}
 
         <form
           onSubmit={handleSubmit}

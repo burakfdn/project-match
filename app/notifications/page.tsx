@@ -11,6 +11,7 @@ type Notification = {
   title: string;
   body: string | null;
   href: string | null;
+  job_id?: number | null;
   read_at: string | null;
   created_at: string;
 };
@@ -22,6 +23,14 @@ function getNotificationHref(
 
   if (href.startsWith("/")) {
     return href;
+  }
+
+  if (notification.type === "project_invitation") {
+    if (notification.job_id) {
+      return `/jobs/${notification.job_id}`;
+    }
+
+    return null;
   }
 
   if (notification.type === "offer_received") {

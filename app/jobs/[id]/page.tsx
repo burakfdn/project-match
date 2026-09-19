@@ -79,6 +79,24 @@ export default function JobDetailPage() {
   const [completingJob, setCompletingJob] =
     useState(false);
 
+  const [hasReview, setHasReview] =
+    useState(false);
+
+  const [reviewRating, setReviewRating] =
+    useState<number | null>(null);
+
+  const [reviewComment, setReviewComment] =
+    useState("");
+
+  const [submittingReview, setSubmittingReview] =
+    useState(false);
+
+  const [reviewError, setReviewError] =
+    useState("");
+
+  const [reviewToast, setReviewToast] =
+    useState<string | null>(null);
+
   const [previewUser, setPreviewUser] =
     useState<ReturnType<
       typeof getPreviewUser
@@ -97,6 +115,18 @@ export default function JobDetailPage() {
 
     loadJob();
   }, [jobId]);
+
+  useEffect(() => {
+    if (!reviewToast) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setReviewToast(null);
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [reviewToast]);
 
   async function loadJob() {
     setLoading(true);
@@ -296,6 +326,33 @@ export default function JobDetailPage() {
       return;
     }
 
+    if (
+      viewerId &&
+      isJobOwner &&
+      normalizedJob.status === "completed"
+    ) {
+      const { data: reviewRow, error: reviewLoadError } =
+        await supabase
+          .from("reviews")
+          .select("id")
+          .eq("job_id", normalizedJob.id)
+          .maybeSingle();
+
+      if (reviewLoadError) {
+        console.error(
+          "Review load error:",
+          reviewLoadError,
+        );
+      }
+
+      setHasReview(Boolean(reviewRow));
+    } else {
+      setHasReview(false);
+    }
+
+    setReviewRating(null);
+    setReviewComment("");
+    setReviewError("");
     setLoading(false);
   }
 
@@ -377,6 +434,11 @@ export default function JobDetailPage() {
     setCurrentUserId(null);
 
     setOffers([]);
+
+    setHasReview(false);
+    setReviewRating(null);
+    setReviewComment("");
+    setReviewError("");
 
     setLoading(false);
   }
@@ -593,6 +655,62 @@ export default function JobDetailPage() {
     setCompletingJob(false);
   }
 
+  async function handleSubmitReview() {
+    if (previewUser || !job || !currentUserId) {
+      return;
+    }
+
+    const acceptedReviewOffer = offers.find(
+      (offer) => offer.status === "accepted",
+    );
+
+    if (
+      currentUserId !== job.customer_id ||
+      job.status !== "completed" ||
+      !acceptedReviewOffer
+    ) {
+      return;
+    }
+
+    if (!reviewRating) {
+      setReviewError("Lütfen bir puan seç.");
+      setReviewToast("Lütfen bir puan seç.");
+      return;
+    }
+
+    setSubmittingReview(true);
+    setReviewError("");
+
+    const { error: insertError } = await supabase
+      .from("reviews")
+      .insert({
+        job_id: job.id,
+        provider_id: acceptedReviewOffer.provider_id,
+        customer_id: currentUserId,
+        rating: reviewRating,
+        comment: reviewComment.trim() || null,
+      });
+
+    if (insertError) {
+      console.error("Review insert error:", insertError);
+
+      setReviewError(
+        "Değerlendirme gönderilemedi.",
+      );
+      setReviewToast(
+        "Değerlendirme gönderilemedi.",
+      );
+      setSubmittingReview(false);
+      return;
+    }
+
+    setHasReview(true);
+    setReviewRating(null);
+    setReviewComment("");
+    setReviewToast("Değerlendirmen gönderildi.");
+    setSubmittingReview(false);
+  }
+
   async function handleOpenConversation() {
     if (previewUser) {
       return;
@@ -789,6 +907,13 @@ export default function JobDetailPage() {
         ]?.full_name?.trim() ||
         "İsimsiz Uzman"
       : null;
+
+  const canReview =
+    !isPreview &&
+    currentUserId !== null &&
+    currentUserId === job.customer_id &&
+    job.status === "completed" &&
+    Boolean(acceptedOffer);
 
   return (
     <main className="min-h-screen bg-zinc-50 px-6 py-10">
@@ -1079,6 +1204,90 @@ export default function JobDetailPage() {
                   </p>
                 </div>
               )}
+
+              {canReview ? (
+                <div className="mt-8 rounded-xl border border-zinc-200 bg-zinc-50 p-5">
+                  {hasReview ? (
+                    <p className="text-sm font-medium text-zinc-800">
+                      ✓ Bu proje için değerlendirme yaptın.
+                    </p>
+                  ) : (
+                    <>
+                      <h2 className="text-base font-semibold text-zinc-900">
+                        Bu uzmanla çalışman nasıldı?
+                      </h2>
+
+                      <div className="mt-4 flex flex-wrap gap-1">
+                        {[1, 2, 3, 4, 5].map((value) => {
+                          const selected =
+                            reviewRating !== null &&
+                            value <= reviewRating;
+
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => {
+                                setReviewRating(value);
+                                setReviewError("");
+                              }}
+                              disabled={submittingReview}
+                              className={`flex h-12 w-12 items-center justify-center rounded-lg text-3xl leading-none transition disabled:cursor-not-allowed ${
+                                selected
+                                  ? "text-zinc-900"
+                                  : "text-zinc-300 hover:text-zinc-500"
+                              }`}
+                              aria-label={`${value} yıldız`}
+                              aria-pressed={
+                                reviewRating === value
+                              }
+                            >
+                              ★
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {reviewError ? (
+                        <p className="mt-2 text-sm text-red-600">
+                          {reviewError}
+                        </p>
+                      ) : null}
+
+                      <label
+                        htmlFor="reviewComment"
+                        className="mt-4 block text-sm font-medium text-zinc-900"
+                      >
+                        Yorum
+                      </label>
+
+                      <textarea
+                        id="reviewComment"
+                        name="reviewComment"
+                        value={reviewComment}
+                        onChange={(event) =>
+                          setReviewComment(event.target.value)
+                        }
+                        disabled={submittingReview}
+                        rows={4}
+                        placeholder="Deneyimini paylaşmak istersen yazabilirsin."
+                        className="mt-2 block w-full resize-none rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:bg-zinc-100"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() => handleSubmitReview()}
+                        disabled={submittingReview}
+                        className="mt-4 w-full rounded-xl bg-zinc-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                      >
+                        {submittingReview
+                          ? "Gönderiliyor..."
+                          : "Değerlendirmeyi Gönder"}
+                      </button>
+                    </>
+                  )}
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -1283,6 +1492,25 @@ export default function JobDetailPage() {
           </aside>
         </div>
       </div>
+
+      {reviewToast ? (
+        <div className="fixed right-4 top-4 z-50 w-[min(calc(100%-2rem),22rem)] rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-lg">
+          <div className="flex items-start gap-3">
+            <p className="min-w-0 flex-1 text-sm text-zinc-800">
+              {reviewToast}
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setReviewToast(null)}
+              className="shrink-0 text-zinc-400 hover:text-zinc-700"
+              aria-label="Bildirimi kapat"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
