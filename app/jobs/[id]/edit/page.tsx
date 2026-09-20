@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/client";
+import { ensureCanonicalJobRoute } from "@/lib/jobs/public-id";
 
 type Category = {
   id: number;
@@ -126,6 +127,8 @@ export default function EditJobPage() {
   const [saving, setSaving] = useState(false);
   const [canEdit, setCanEdit] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [internalJobId, setInternalJobId] = useState<number | null>(null);
+  const [publicJobId, setPublicJobId] = useState("");
 
   const availableServices = services.filter(
     (service) => service.category_id === Number(categoryId),
@@ -143,6 +146,26 @@ export default function EditJobPage() {
       }
 
       const supabase = createClient();
+
+      const resolved = await ensureCanonicalJobRoute(
+        supabase,
+        jobId,
+        router,
+        "/edit",
+      );
+
+      if (resolved.status === "redirect") {
+        return;
+      }
+
+      if (resolved.status === "missing") {
+        setCanEdit(false);
+        setLoading(false);
+        return;
+      }
+
+      setInternalJobId(resolved.id);
+      setPublicJobId(resolved.publicId);
 
       const {
         data: { user },
@@ -184,7 +207,7 @@ export default function EditJobPage() {
                 )
               `,
             )
-            .eq("id", jobId)
+            .eq("id", resolved.id)
             .single(),
         ]);
 
@@ -257,7 +280,7 @@ export default function EditJobPage() {
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
 
-    if (!jobId) {
+    if (!internalJobId) {
       setError("Bu ilan düzenlenemiyor.");
       return;
     }
@@ -307,7 +330,7 @@ export default function EditJobPage() {
     const { error: updateError } = await supabase.rpc(
       "update_my_job",
       {
-        p_job_id: Number(jobId),
+        p_job_id: internalJobId,
         p_title: title.trim(),
         p_description: description.trim(),
         p_budget: budget ? Number(budget) : null,
@@ -327,7 +350,7 @@ export default function EditJobPage() {
       return;
     }
 
-    router.push(`/jobs/${jobId}`);
+    router.push(`/jobs/${publicJobId || jobId}`);
   }
 
   if (loading) {
@@ -348,7 +371,7 @@ export default function EditJobPage() {
 
           {jobId ? (
             <Link
-              href={`/jobs/${jobId}`}
+              href={`/jobs/${publicJobId || jobId}`}
               className="mt-6 inline-block text-sm font-medium text-zinc-700 hover:text-zinc-950"
             >
               ← İlana dön
@@ -576,7 +599,7 @@ export default function EditJobPage() {
 
           <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
             <Link
-              href={`/jobs/${jobId}`}
+              href={`/jobs/${publicJobId || jobId}`}
               className="rounded-lg border border-zinc-200 px-4 py-3 text-center text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
             >
               İptal

@@ -6,9 +6,11 @@ import { useRouter } from "next/navigation";
 
 import { getPreviewUser } from "@/lib/preview";
 import { createClient } from "@/lib/supabase/client";
+import { getJobPublicIdMap } from "@/lib/jobs/public-id";
 
 type Job = {
   id: number;
+  public_id?: string | null;
   customer_id: string;
   title: string;
   description: string;
@@ -16,6 +18,7 @@ type Job = {
   city: string | null;
   location_type: string;
   status: string;
+  target_provider_id: string | null;
   service: {
     id: number;
     name: string;
@@ -35,6 +38,90 @@ type ProviderOffer = {
 type LocationFilter = "all" | "remote" | "on_site" | "hybrid";
 type JobSort = "newest" | "budget_high" | "budget_low";
 
+const CITIES = [
+  "Adana",
+  "Adıyaman",
+  "Afyonkarahisar",
+  "Ağrı",
+  "Aksaray",
+  "Amasya",
+  "Ankara",
+  "Antalya",
+  "Ardahan",
+  "Artvin",
+  "Aydın",
+  "Balıkesir",
+  "Bartın",
+  "Batman",
+  "Bayburt",
+  "Bilecik",
+  "Bingöl",
+  "Bitlis",
+  "Bolu",
+  "Burdur",
+  "Bursa",
+  "Çanakkale",
+  "Çankırı",
+  "Çorum",
+  "Denizli",
+  "Diyarbakır",
+  "Düzce",
+  "Edirne",
+  "Elazığ",
+  "Erzincan",
+  "Erzurum",
+  "Eskişehir",
+  "Gaziantep",
+  "Giresun",
+  "Gümüşhane",
+  "Hakkari",
+  "Hatay",
+  "Iğdır",
+  "Isparta",
+  "İstanbul",
+  "İzmir",
+  "Kahramanmaraş",
+  "Karabük",
+  "Karaman",
+  "Kars",
+  "Kastamonu",
+  "Kayseri",
+  "Kilis",
+  "Kırıkkale",
+  "Kırklareli",
+  "Kırşehir",
+  "Kocaeli",
+  "Konya",
+  "Kütahya",
+  "Malatya",
+  "Manisa",
+  "Mardin",
+  "Mersin",
+  "Muğla",
+  "Muş",
+  "Nevşehir",
+  "Niğde",
+  "Ordu",
+  "Osmaniye",
+  "Rize",
+  "Sakarya",
+  "Samsun",
+  "Siirt",
+  "Sinop",
+  "Sivas",
+  "Şanlıurfa",
+  "Şırnak",
+  "Tekirdağ",
+  "Tokat",
+  "Trabzon",
+  "Tunceli",
+  "Uşak",
+  "Van",
+  "Yalova",
+  "Yozgat",
+  "Zonguldak",
+];
+
 function parseBudgetInput(value: string) {
   const trimmed = value.trim().replace(/\./g, "").replace(",", ".");
 
@@ -49,6 +136,96 @@ function parseBudgetInput(value: string) {
   }
 
   return parsed;
+}
+
+function sameUuid(
+  left: string | null | undefined,
+  right: string | null | undefined,
+) {
+  if (!left || !right) {
+    return false;
+  }
+
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+type ViewerMatchProfile = {
+  city: string | null;
+  can_work_remote: boolean | null;
+  can_work_on_site: boolean | null;
+  serviceIds: number[] | null;
+};
+
+function sameCity(
+  left: string | null | undefined,
+  right: string | null | undefined,
+) {
+  const a = left?.trim() ?? "";
+  const b = right?.trim() ?? "";
+
+  if (!a || !b) {
+    return false;
+  }
+
+  return a === b;
+}
+
+function getProviderMatchReasons(
+  job: {
+    service_id: number | null;
+    city: string | null;
+    location_type: string;
+  },
+  viewer: ViewerMatchProfile | null,
+) {
+  if (!viewer) {
+    return [];
+  }
+
+  const reasons: string[] = [];
+
+  if (
+    job.service_id &&
+    viewer.serviceIds !== null &&
+    viewer.serviceIds.includes(job.service_id)
+  ) {
+    reasons.push("Bu hizmeti veriyorsunuz");
+  }
+
+  if (job.location_type === "remote" && viewer.can_work_remote === true) {
+    reasons.push("Uzaktan çalışmaya açıksınız");
+  }
+
+  if (job.location_type === "on_site") {
+    if (viewer.can_work_on_site === true) {
+      reasons.push("Yerinde çalışmaya açıksınız");
+    }
+
+    if (
+      viewer.can_work_on_site === true &&
+      sameCity(job.city, viewer.city)
+    ) {
+      reasons.push("Çalışma şehriniz proje ile eşleşiyor");
+    }
+  }
+
+  if (job.location_type === "hybrid") {
+    if (
+      viewer.can_work_remote === true &&
+      viewer.can_work_on_site === true
+    ) {
+      reasons.push("Hibrit çalışma şekline uygunsunuz");
+    }
+
+    if (
+      viewer.can_work_on_site === true &&
+      sameCity(job.city, viewer.city)
+    ) {
+      reasons.push("Çalışma şehriniz proje ile eşleşiyor");
+    }
+  }
+
+  return reasons;
 }
 
 export default function JobsPage() {
@@ -66,15 +243,22 @@ export default function JobsPage() {
   const [serviceFilter, setServiceFilter] = useState("");
   const [locationFilter, setLocationFilter] =
     useState<LocationFilter>("all");
+  const [cityFilter, setCityFilter] = useState("");
   const [budgetMin, setBudgetMin] = useState("");
   const [budgetMax, setBudgetMax] = useState("");
   const [sort, setSort] = useState<JobSort>("newest");
+  const [currentUserId, setCurrentUserId] = useState<
+    string | null
+  >(null);
+  const [viewerMatchProfile, setViewerMatchProfile] =
+    useState<ViewerMatchProfile | null>(null);
 
   async function loadJobs() {
     const supabase = createClient();
 
     setLoading(true);
     setError(null);
+    setViewerMatchProfile(null);
 
     const previewUser = getPreviewUser();
 
@@ -92,6 +276,7 @@ export default function JobsPage() {
     const previewMode = previewUser !== null;
 
     setIsPreview(previewMode);
+    setCurrentUserId(effectiveUserId);
 
     let providerOffers: ProviderOffer[] = [];
 
@@ -108,9 +293,8 @@ export default function JobsPage() {
         });
 
       if (offersError) {
-        setError(
-          `Teklifler yüklenirken bir hata oluştu: ${offersError.message}`,
-        );
+        console.error(offersError);
+        setError("Bir hata oluştu. Lütfen tekrar deneyin.");
         setLoading(false);
         return;
       }
@@ -123,9 +307,8 @@ export default function JobsPage() {
         .eq("provider_id", effectiveUserId);
 
       if (offersError) {
-        setError(
-          `Teklifler yüklenirken bir hata oluştu: ${offersError.message}`,
-        );
+        console.error(offersError);
+        setError("Bir hata oluştu. Lütfen tekrar deneyin.");
         setLoading(false);
         return;
       }
@@ -152,9 +335,8 @@ export default function JobsPage() {
       );
 
       if (error) {
-        setError(
-          `Uygun işler yüklenirken bir hata oluştu: ${error.message}`,
-        );
+        console.error(error);
+        setError("Bir hata oluştu. Lütfen tekrar deneyin.");
         setLoading(false);
         return;
       }
@@ -169,6 +351,7 @@ export default function JobsPage() {
           city: string | null;
           location_type: string;
           status: string;
+          target_provider_id?: string | null;
           service_id: number;
           service_name: string;
           category_id: number | null;
@@ -183,6 +366,7 @@ export default function JobsPage() {
         city: job.city,
         location_type: job.location_type,
         status: job.status,
+        target_provider_id: job.target_provider_id ?? null,
         service: {
           id: job.service_id,
           name: job.service_name,
@@ -204,6 +388,7 @@ export default function JobsPage() {
         .select(
           `
             id,
+            public_id,
             customer_id,
             title,
             description,
@@ -211,6 +396,7 @@ export default function JobsPage() {
             city,
             location_type,
             status,
+            target_provider_id,
             service:services (
               id,
               name,
@@ -226,18 +412,64 @@ export default function JobsPage() {
         .order("created_at", { ascending: false });
 
       if (error) {
-        setError(
-          `Uygun işler yüklenirken bir hata oluştu: ${error.message}`,
-        );
+        console.error(error);
+        setError("Bir hata oluştu. Lütfen tekrar deneyin.");
         setLoading(false);
         return;
       }
 
-      jobList = (data as unknown as Job[]) ?? [];
+      jobList = ((data as unknown as Job[]) ?? []).map(
+        (job) => ({
+          ...job,
+          target_provider_id: job.target_provider_id ?? null,
+        }),
+      );
     }
+
+    const publicIds = await getJobPublicIdMap(
+      supabase,
+      jobList.map((job) => job.id),
+    );
+
+    jobList = jobList.map((job) => ({
+      ...job,
+      public_id: job.public_id ?? publicIds.get(job.id) ?? null,
+    }));
 
     setJobs(jobList);
     setSubmittedJobIds(submittedJobIdsFromDb);
+
+    const { data: providerProfile } = await supabase
+      .from("provider_profiles")
+      .select("city, can_work_remote, can_work_on_site")
+      .eq("user_id", effectiveUserId)
+      .maybeSingle();
+
+    const { data: providerServices, error: servicesError } =
+      await supabase
+        .from("provider_services")
+        .select("service_id")
+        .eq("provider_id", effectiveUserId);
+
+    setViewerMatchProfile({
+      city:
+        typeof providerProfile?.city === "string"
+          ? providerProfile.city
+          : null,
+      can_work_remote:
+        providerProfile == null
+          ? null
+          : Boolean(providerProfile.can_work_remote),
+      can_work_on_site:
+        providerProfile == null
+          ? null
+          : Boolean(providerProfile.can_work_on_site),
+      serviceIds: servicesError
+        ? null
+        : ((providerServices ?? []) as Array<{ service_id: number }>).map(
+            (row) => Number(row.service_id),
+          ),
+    });
 
     const offerMap: Record<
       number,
@@ -313,6 +545,7 @@ export default function JobsPage() {
     categoryFilter !== "" ||
     serviceFilter !== "" ||
     locationFilter !== "all" ||
+    cityFilter !== "" ||
     budgetMin.trim() !== "" ||
     budgetMax.trim() !== "" ||
     sort !== "newest";
@@ -355,6 +588,10 @@ export default function JobsPage() {
         return false;
       }
 
+      if (cityFilter && job.city !== cityFilter) {
+        return false;
+      }
+
       if (minBudget !== null) {
         if (job.budget === null || job.budget < minBudget) {
           return false;
@@ -391,6 +628,7 @@ export default function JobsPage() {
     categoryFilter,
     serviceFilter,
     locationFilter,
+    cityFilter,
     budgetMin,
     budgetMax,
     sort,
@@ -401,6 +639,7 @@ export default function JobsPage() {
     setCategoryFilter("");
     setServiceFilter("");
     setLocationFilter("all");
+    setCityFilter("");
     setBudgetMin("");
     setBudgetMax("");
     setSort("newest");
@@ -433,14 +672,23 @@ export default function JobsPage() {
         </h1>
 
         <p className="mt-2 text-zinc-500">
-          Hizmetlerine ve çalışma bölgene uygun açık işleri burada
-          görebilirsin.
+          Hizmetin, çalışma şeklin ve (yerinde/hibrit) şehrine uyan
+          açık işler.
         </p>
       </div>
 
       {error && (
-        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <p className="text-sm text-red-700">{error}</p>
+          <button
+            type="button"
+            onClick={() => {
+              void loadJobs();
+            }}
+            className="text-sm font-medium text-red-800 underline-offset-2 hover:underline"
+          >
+            Tekrar dene
+          </button>
         </div>
       )}
 
@@ -559,6 +807,22 @@ export default function JobsPage() {
             </div>
 
             <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-zinc-700">Şehir</span>
+              <select
+                value={cityFilter}
+                onChange={(event) => setCityFilter(event.target.value)}
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+              >
+                <option value="">Tüm şehirler</option>
+                {CITIES.map((cityName) => (
+                  <option key={cityName} value={cityName}>
+                    {cityName}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="flex flex-col gap-1.5 text-sm">
               <span className="font-medium text-zinc-700">
                 Min. bütçe
               </span>
@@ -628,18 +892,26 @@ export default function JobsPage() {
         </div>
       )}
 
-      {jobs.length === 0 ? (
+      {!error && jobs.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-zinc-300 p-12 text-center">
           <h2 className="text-lg font-medium">
             Şu anda sana uygun açık iş yok.
           </h2>
 
           <p className="mt-2 text-sm text-zinc-500">
-            Profilindeki hizmetleri ve çalışma bölgelerini
-            güncellediğinde daha fazla iş görebilirsin.
+            Profilindeki hizmet, çalışma şekli ve şehir
+            bilgilerini güncelleyerek eşleşme alanını
+            genişletebilirsin.
           </p>
+
+          <Link
+            href="/profile/edit"
+            className="mt-5 inline-flex rounded-lg bg-black px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800"
+          >
+            Profili düzenle
+          </Link>
         </div>
-      ) : filteredJobs.length === 0 ? (
+      ) : !error && filteredJobs.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-zinc-300 p-12 text-center">
           <h2 className="text-lg font-medium">
             Bu filtrelere uyan iş yok.
@@ -673,6 +945,20 @@ export default function JobsPage() {
               categoryName.toLocaleLowerCase("tr-TR") !==
                 serviceName.toLocaleLowerCase("tr-TR");
 
+            const isTargeted = sameUuid(
+              job.target_provider_id,
+              currentUserId,
+            );
+
+            const matchReasons = getProviderMatchReasons(
+              {
+                service_id: job.service?.id ?? null,
+                city: job.city,
+                location_type: job.location_type,
+              },
+              viewerMatchProfile,
+            ).slice(0, 4);
+
             return (
               <article
                 key={job.id}
@@ -689,10 +975,14 @@ export default function JobsPage() {
                   }
 
                   router.push(
-                    `/jobs/${job.id}`,
+                    `/jobs/${job.public_id || job.id}`,
                   );
                 }}
-                className="cursor-pointer rounded-2xl border border-zinc-200 bg-white p-6 transition hover:border-zinc-300"
+                className={
+                  isTargeted
+                    ? "cursor-pointer rounded-2xl border border-zinc-200 border-l-2 border-l-indigo-500 bg-indigo-50/40 p-6 transition hover:border-zinc-300"
+                    : "cursor-pointer rounded-2xl border border-zinc-200 bg-white p-6 transition hover:border-zinc-300"
+                }
               >
                 <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
@@ -714,9 +1004,31 @@ export default function JobsPage() {
                       </span>
                     </div>
 
+                    {isTargeted ? (
+                      <p className="mb-1 text-xs font-semibold text-indigo-600">
+                        Sana özel proje
+                      </p>
+                    ) : null}
+
                     <h2 className="text-xl font-semibold text-zinc-950">
                       {job.title}
                     </h2>
+
+                    {matchReasons.length > 0 ? (
+                      <ul className="mt-3 space-y-1">
+                        {matchReasons.map((reason) => (
+                          <li
+                            key={reason}
+                            className="flex items-start gap-1.5 text-sm leading-5 text-zinc-600"
+                          >
+                            <span className="mt-0.5 shrink-0" aria-hidden="true">
+                              ✓
+                            </span>
+                            <span>{reason}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
 
                     <p className="mt-3 max-w-3xl text-sm leading-6 text-zinc-600">
                       {job.description}
@@ -737,29 +1049,41 @@ export default function JobsPage() {
                 </div>
 
                 <div className="mt-6 flex flex-wrap gap-x-8 gap-y-4 border-t border-zinc-100 pt-5">
-                  <div>
-                    <p className="text-xs text-zinc-400">
-                      Konum
-                    </p>
+                  {job.location_type === "remote" ? (
+                    <div>
+                      <p className="text-xs text-zinc-400">
+                        Çalışma şekli
+                      </p>
 
-                    <p className="mt-1 text-sm font-medium">
-                      {job.city ?? "Belirtilmedi"}
-                    </p>
-                  </div>
+                      <p className="mt-1 text-sm font-medium">
+                        Uzaktan · Şehir yok
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <div>
+                        <p className="text-xs text-zinc-400">
+                          Konum
+                        </p>
 
-                  <div>
-                    <p className="text-xs text-zinc-400">
-                      Çalışma şekli
-                    </p>
+                        <p className="mt-1 text-sm font-medium">
+                          {job.city ?? "Belirtilmedi"}
+                        </p>
+                      </div>
 
-                    <p className="mt-1 text-sm font-medium">
-                      {job.location_type === "remote"
-                        ? "Uzaktan"
-                        : job.location_type === "on_site"
-                          ? "Yerinde"
-                          : "Hibrit"}
-                    </p>
-                  </div>
+                      <div>
+                        <p className="text-xs text-zinc-400">
+                          Çalışma şekli
+                        </p>
+
+                        <p className="mt-1 text-sm font-medium">
+                          {job.location_type === "on_site"
+                            ? "Yerinde"
+                            : "Hibrit"}
+                        </p>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div className="mt-6 border-t border-zinc-100 pt-5">
@@ -777,7 +1101,7 @@ export default function JobsPage() {
                         ? "✓ Teklifin kabul edildi"
                         : submittedOffer?.status === "rejected"
                           ? "✕ Teklifin reddedildi"
-                          : "✓ Teklif verdin"}{" "}
+                          : "✓ Teklifin bekliyor"}{" "}
                       —{" "}
                       {submittedOffer?.price.toLocaleString("tr-TR")} TL
                     </div>
@@ -791,7 +1115,7 @@ export default function JobsPage() {
                     </button>
                   ) : (
                     <Link
-                      href={`/jobs/${job.id}/offer`}
+                      href={`/jobs/${job.public_id || job.id}/offer`}
                       className="inline-flex rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800"
                     >
                       Teklif Ver

@@ -5,9 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/client";
 import { getPreviewUser } from "@/lib/preview";
+import { ensureCanonicalJobRoute } from "@/lib/jobs/public-id";
 
 type Job = {
   id: number;
+  public_id: string;
   customer_id: string;
   title: string;
   description: string | null;
@@ -68,52 +70,46 @@ export default function JobOfferPage() {
 
   useEffect(() => {
     if (!jobId) {
-      setError("İlan bulunamadı.");
+      setError("Bu içeriğe şu an erişilemiyor.");
       setLoading(false);
       return;
     }
-
-    console.log("OFFER DEBUG EFFECT", {
-      jobId,
-      path: window.location.pathname,
-    });
 
     loadJob();
   }, [jobId]);
 
   async function loadJob() {
-    console.log("OFFER DEBUG LOADJOB START", {
-      jobId,
-      path: window.location.pathname,
-    });
-
     setLoading(true);
     setError("");
 
-    console.log("OFFER DEBUG RPC INPUT", {
+    const resolved = await ensureCanonicalJobRoute(
+      supabase,
       jobId,
-      numericJobId: Number(jobId),
-    });
+      router,
+      "/offer",
+    );
+
+    if (resolved.status === "redirect") {
+      return;
+    }
+
+    if (resolved.status === "missing") {
+      setError("Bu içeriğe şu an erişilemiyor.");
+      setLoading(false);
+      return;
+    }
 
     const { data, error } =
       await supabase.rpc(
         "get_job_for_offer",
         {
-          p_job_id: Number(jobId),
+          p_job_id: resolved.id,
         },
       );
-
-    console.log("OFFER DEBUG LOADJOB RPC DONE");
 
     const jobRow = Array.isArray(data)
       ? data[0]
       : data;
-
-    console.log("OFFER DEBUG RPC RESULT", {
-      requestedJobId: Number(jobId),
-      returnedJobId: jobRow?.id,
-      returnedTitle: jobRow?.title,
-    });
 
     if (error || !jobRow) {
       console.error(
@@ -121,9 +117,7 @@ export default function JobOfferPage() {
         error,
       );
 
-      setError(
-        "İlan bilgileri yüklenemedi.",
-      );
+      setError("Bu içeriğe şu an erişilemiyor.");
 
       setLoading(false);
       return;
@@ -131,6 +125,7 @@ export default function JobOfferPage() {
 
     setJob({
       id: jobRow.id,
+      public_id: resolved.publicId,
       customer_id: jobRow.customer_id,
       title: jobRow.title,
       description:
@@ -159,7 +154,7 @@ export default function JobOfferPage() {
       jobRow.customer_id !== userId
     ) {
       setJob(null);
-      setError("Bu ilan görüntülenemiyor.");
+      setError("Bu içeriğe şu an erişilemiyor.");
       setLoading(false);
       return;
     }
@@ -221,21 +216,12 @@ export default function JobOfferPage() {
   async function submitOffer(
     event: React.FormEvent,
   ) {
-    console.log("OFFER DEBUG SUBMIT START", {
-      jobId,
-      currentJobId: job?.id ?? null,
-      currentJobTitle: job?.title ?? null,
-    });
-
     event.preventDefault();
 
     setError("");
     setSuccess("");
 
     if (previewMode) {
-      console.log("OFFER DEBUG SUBMIT STOPPED", {
-        reason: "preview",
-      });
       setError(
         "Önizleme modunda teklif gönderilemez.",
       );
@@ -251,9 +237,6 @@ export default function JobOfferPage() {
       !Number.isFinite(numericPrice) ||
       numericPrice < 0
     ) {
-      console.log("OFFER DEBUG SUBMIT STOPPED", {
-        reason: "fiyat geçersiz",
-      });
       setError(
         "Geçerli bir teklif tutarı gir.",
       );
@@ -261,9 +244,6 @@ export default function JobOfferPage() {
     }
 
     if (numericPrice === 0) {
-      console.log("OFFER DEBUG SUBMIT STOPPED", {
-        reason: "fiyat geçersiz",
-      });
       setError(
         "Teklif tutarı 0 TL olamaz.",
       );
@@ -271,17 +251,11 @@ export default function JobOfferPage() {
     }
 
     if (!job) {
-      console.log("OFFER DEBUG SUBMIT STOPPED", {
-        reason: "job yok",
-      });
-      setError("İlan bulunamadı.");
+      setError("Bu içeriğe şu an erişilemiyor.");
       return;
     }
 
     if (job.status !== "open") {
-      console.log("OFFER DEBUG SUBMIT STOPPED", {
-        reason: "status !== open",
-      });
       setError(
         "Bu ilan artık teklif almıyor.",
       );
@@ -289,9 +263,6 @@ export default function JobOfferPage() {
     }
 
     if (alreadyOffered) {
-      console.log("OFFER DEBUG SUBMIT STOPPED", {
-        reason: "alreadyOffered",
-      });
       setError("Bu ilana zaten teklif verdin.");
       return;
     }
@@ -304,9 +275,6 @@ export default function JobOfferPage() {
     } = await supabase.auth.getUser();
 
     if (userError || !userData.user) {
-      console.log("OFFER DEBUG SUBMIT STOPPED", {
-        reason: "kullanıcı yok",
-      });
       setError(
         "Teklif göndermek için giriş yapmalısın.",
       );
@@ -326,9 +294,6 @@ export default function JobOfferPage() {
         .maybeSingle();
 
     if (!providerProfile) {
-      console.log("OFFER DEBUG SUBMIT STOPPED", {
-        reason: "provider profile yok",
-      });
       setError(
         "Teklif gönderebilmek için uzman profilini tamamlamalısın.",
       );
@@ -336,14 +301,6 @@ export default function JobOfferPage() {
       setSubmitting(false);
       return;
     }
-
-    console.log("OFFER DEBUG INSERT", {
-      urlJobId: jobId,
-      stateJobId: job?.id,
-      stateJobTitle: job?.title,
-      insertJobId: job?.id,
-      providerId: userData.user.id,
-    });
 
     const { error: offerError } =
       await supabase
@@ -356,10 +313,6 @@ export default function JobOfferPage() {
           message:
             message.trim() || null,
         });
-
-    console.log("OFFER DEBUG INSERT RESULT", {
-      error: offerError,
-    });
 
     if (offerError) {
       console.error(
@@ -392,7 +345,7 @@ export default function JobOfferPage() {
 
     setTimeout(() => {
       router.push(
-        `/jobs/${job.id}`,
+        `/jobs/${job.public_id}`,
       );
     }, 900);
   }
@@ -426,6 +379,14 @@ export default function JobOfferPage() {
               {error}
             </p>
           </div>
+
+          <button
+            type="button"
+            onClick={() => router.push("/jobs")}
+            className="mt-6 text-sm font-medium text-zinc-500 transition hover:text-zinc-900"
+          >
+            İşler’e dön
+          </button>
         </div>
       </main>
     );
@@ -452,7 +413,7 @@ export default function JobOfferPage() {
           type="button"
           onClick={() =>
             router.push(
-              `/jobs/${job.id}`,
+              `/jobs/${job.public_id}`,
             )
           }
           className="mb-6 text-sm font-medium text-zinc-500 transition hover:text-zinc-900"
@@ -461,18 +422,94 @@ export default function JobOfferPage() {
         </button>
 
         <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
-          <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm">
+          <aside className="lg:col-start-2 lg:row-start-1">
+            <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+              <h2 className="text-sm font-semibold text-zinc-900">
+                Proje Özeti
+              </h2>
+
+              <div className="mt-5 flex flex-col gap-5">
+                <div className="lg:hidden">
+                  <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">
+                    {job.title}
+                  </h1>
+                </div>
+
+                {job.description ? (
+                  <div>
+                    <p className="text-xs text-zinc-400">
+                      Açıklama
+                    </p>
+
+                    <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-zinc-600">
+                      {job.description}
+                    </p>
+                  </div>
+                ) : null}
+
+                {job.service_name ? (
+                  <div className="lg:hidden">
+                    <p className="text-xs text-zinc-400">
+                      Hizmet
+                    </p>
+
+                    <div className="mt-2">
+                      <span className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-medium text-zinc-700">
+                        {job.service_name}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="lg:order-2">
+                  <p className="text-xs text-zinc-400">
+                    Çalışma şekli
+                  </p>
+
+                  <p className="mt-1 text-sm font-medium text-zinc-800">
+                    {getLocationLabel()}
+                  </p>
+                </div>
+
+                {job.city ? (
+                  <div className="lg:order-3">
+                    <p className="text-xs text-zinc-400">
+                      Şehir
+                    </p>
+
+                    <p className="mt-1 text-sm font-medium text-zinc-800">
+                      {job.city}
+                    </p>
+                  </div>
+                ) : null}
+
+                <div className="max-lg:order-last lg:order-1">
+                  <p className="text-xs text-zinc-400">
+                    Bütçe
+                  </p>
+
+                  <p className="mt-1 text-base font-semibold text-zinc-900">
+                    {formatPrice(
+                      job.budget,
+                    )}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm lg:col-start-1 lg:row-start-1 lg:row-span-2">
             <div className="border-b border-zinc-100 px-6 py-7 sm:px-8">
               <p className="text-sm font-medium text-zinc-500">
                 Teklif Ver
               </p>
 
-              <h1 className="mt-2 text-2xl font-semibold tracking-tight text-zinc-900">
+              <h1 className="mt-2 hidden text-2xl font-semibold tracking-tight text-zinc-900 lg:block">
                 {job.title}
               </h1>
 
               {job.service_name && (
-                <div className="mt-4">
+                <div className="mt-4 hidden lg:block">
                   <span className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-medium text-zinc-700">
                     {job.service_name}
                   </span>
@@ -494,19 +531,35 @@ export default function JobOfferPage() {
                   <p className="text-sm text-zinc-700">
                     Bu ilana zaten teklif verdin.
                   </p>
+
+                  <p className="mt-2 text-sm text-zinc-500">
+                    Bu projeye tekrar teklif veremezsin.
+                  </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    router.push(
-                      `/jobs/${job.id}`,
-                    )
-                  }
-                  className="mt-6 rounded-xl border border-zinc-200 px-5 py-3 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50"
-                >
-                  İlana dön
-                </button>
+                <div className="mt-6 flex flex-wrap items-center gap-4">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      router.push(
+                        `/jobs/${job.public_id}`,
+                      )
+                    }
+                    className="rounded-xl border border-zinc-200 px-5 py-3 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50"
+                  >
+                    İlana dön
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      router.push("/my-offers")
+                    }
+                    className="text-sm font-medium text-zinc-500 transition hover:text-zinc-900"
+                  >
+                    Tekliflerim
+                  </button>
+                </div>
               </div>
             ) : job.status !== "open" ? (
               <div className="px-6 py-7 sm:px-8">
@@ -520,7 +573,7 @@ export default function JobOfferPage() {
                   type="button"
                   onClick={() =>
                     router.push(
-                      `/jobs/${job.id}`,
+                      `/jobs/${job.public_id}`,
                     )
                   }
                   className="mt-6 rounded-xl border border-zinc-200 px-5 py-3 text-sm font-semibold text-zinc-700 transition hover:bg-zinc-50"
@@ -566,6 +619,13 @@ export default function JobOfferPage() {
                   Proje sahibi tarafından belirtilen bütçe:{" "}
                   {formatPrice(job.budget)}
                 </p>
+
+                {job.budget !== null ? (
+                  <p className="mt-1 text-xs text-zinc-400">
+                    Bu bir tavan değildir; kendi teklif tutarını
+                    yazabilirsin.
+                  </p>
+                ) : null}
               </div>
 
               <div className="mt-6">
@@ -616,7 +676,7 @@ export default function JobOfferPage() {
                   type="button"
                   onClick={() =>
                     router.push(
-                      `/jobs/${job.id}`,
+                      `/jobs/${job.public_id}`,
                     )
                   }
                   disabled={submitting}
@@ -643,69 +703,25 @@ export default function JobOfferPage() {
             )}
           </div>
 
-          <aside>
-            <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-              <h2 className="text-sm font-semibold text-zinc-900">
-                Proje Özeti
-              </h2>
+          <div className="rounded-2xl border border-zinc-200 bg-white p-6 lg:col-start-2 lg:row-start-2">
+            <h2 className="text-sm font-semibold text-zinc-900">
+              Teklif verirken
+            </h2>
 
-              <div className="mt-5 space-y-5">
-                <div>
-                  <p className="text-xs text-zinc-400">
-                    Bütçe
-                  </p>
+            <ul className="mt-4 space-y-3 text-sm leading-6 text-zinc-500">
+              <li>
+                • Teklif tutarını net belirt.
+              </li>
 
-                  <p className="mt-1 text-base font-semibold text-zinc-900">
-                    {formatPrice(
-                      job.budget,
-                    )}
-                  </p>
-                </div>
+              <li>
+                • Projeyi nasıl ele alacağını kısaca anlat.
+              </li>
 
-                <div>
-                  <p className="text-xs text-zinc-400">
-                    Çalışma şekli
-                  </p>
-
-                  <p className="mt-1 text-sm font-medium text-zinc-800">
-                    {getLocationLabel()}
-                  </p>
-                </div>
-
-                {job.city && (
-                  <div>
-                    <p className="text-xs text-zinc-400">
-                      Şehir
-                    </p>
-
-                    <p className="mt-1 text-sm font-medium text-zinc-800">
-                      {job.city}
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6">
-              <h2 className="text-sm font-semibold text-zinc-900">
-                Teklif verirken
-              </h2>
-
-              <ul className="mt-4 space-y-3 text-sm leading-6 text-zinc-500">
-                <li>
-                  • Teklif tutarını net belirt.
-                </li>
-
-                <li>
-                  • Projeyi nasıl ele alacağını kısaca anlat.
-                </li>
-
-                <li>
-                  • Teslim süresi veya çalışma koşullarını gerekiyorsa belirt.
-                </li>
-              </ul>
-            </div>
-          </aside>
+              <li>
+                • Teslim süresi veya çalışma koşullarını gerekiyorsa belirt.
+              </li>
+            </ul>
+          </div>
         </div>
       </div>
     </main>

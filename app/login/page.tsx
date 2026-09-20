@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { getAuthErrorMessage } from "@/lib/auth/errors";
 import { createClient } from "@/lib/supabase/client";
+import { clearPreviewUser } from "@/lib/preview";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -36,6 +37,8 @@ export default function LoginPage() {
       setError(getAuthErrorMessage(authError));
       return;
     }
+
+    clearPreviewUser();
 
     router.push("/");
     router.refresh();

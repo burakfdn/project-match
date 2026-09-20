@@ -1,8 +1,7 @@
 "use client";
 
-// /profile shows the signed-in provider's public profile, not the edit form.
 import { useEffect, useMemo, useRef, useState } from "react";
-
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 import {
@@ -11,7 +10,6 @@ import {
 } from "@/lib/preview";
 
 import { createClient } from "@/lib/supabase/client";
-import { ProviderPublicProfileView } from "@/components/provider-public-profile";
 
 type Category = {
   id: number;
@@ -181,7 +179,8 @@ function mapWorkSamples(
   });
 }
 
-export default function ProfilePage() {
+export default function ProfileEditPage() {
+  const router = useRouter();
   const [userId, setUserId] = useState<string | null>(null);
   const [previewUser, setPreviewUser] =
     useState<PreviewUser | null>(null);
@@ -254,6 +253,7 @@ export default function ProfilePage() {
     useState(false);
 
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   const [message, setMessage] =
     useState<string | null>(null);
@@ -261,105 +261,7 @@ export default function ProfilePage() {
   const [error, setError] =
     useState<string | null>(null);
 
-  const [showWorkForm, setShowWorkForm] = useState(false);
-
-  const [reviewSummary, setReviewSummary] = useState<{
-    average: string;
-    count: number;
-  } | null>(null);
-
-  const [reviews, setReviews] = useState<
-    Array<{
-      rating: number;
-      comment: string | null;
-      created_at: string;
-    }>
-  >([]);
-
-  const [showReviews, setShowReviews] = useState(false);
-
-  const [completedProjectCount, setCompletedProjectCount] =
-    useState(0);
-
-  const [workSamplesError, setWorkSamplesError] = useState("");
-
   const isPreview = previewUser !== null;
-
-  async function loadReviewsAndCompleted(providerId: string) {
-    const supabase = createClient();
-
-    setReviewSummary(null);
-    setReviews([]);
-    setShowReviews(false);
-    setCompletedProjectCount(0);
-
-    const { data: reviewsData, error: reviewsError } =
-      await supabase
-        .from("reviews")
-        .select("rating, comment, created_at")
-        .eq("provider_id", providerId)
-        .order("created_at", { ascending: false });
-
-    if (reviewsError) {
-      console.error("Provider reviews error:", reviewsError);
-      setReviewSummary(null);
-      setReviews([]);
-    } else {
-      const normalizedReviews = (reviewsData ?? []).map((row) => ({
-        rating: Number(row.rating),
-        comment:
-          typeof row.comment === "string" && row.comment.trim()
-            ? row.comment.trim()
-            : null,
-        created_at: String(row.created_at ?? ""),
-      }));
-
-      const ratings = normalizedReviews
-        .map((row) => row.rating)
-        .filter((rating) => Number.isFinite(rating));
-
-      setReviews(normalizedReviews);
-
-      if (ratings.length === 0) {
-        setReviewSummary(null);
-      } else {
-        const total = ratings.reduce((sum, rating) => sum + rating, 0);
-        const average = total / ratings.length;
-
-        setReviewSummary({
-          average: (Math.round(average * 10) / 10).toFixed(1),
-          count: ratings.length,
-        });
-      }
-    }
-
-    const {
-      data: completedCountData,
-      error: completedCountError,
-    } = await supabase.rpc(
-      "get_provider_completed_project_count",
-      {
-        p_provider_id: providerId,
-      },
-    );
-
-    if (completedCountError) {
-      console.error(
-        "Provider completed projects error:",
-        completedCountError,
-      );
-      setCompletedProjectCount(0);
-      return;
-    }
-
-    const completedCount = Number(completedCountData);
-
-    setCompletedProjectCount(
-      Number.isFinite(completedCount) && completedCount > 0
-        ? completedCount
-        : 0,
-    );
-  }
 
   async function loadProfile() {
     const supabase = createClient();
@@ -518,16 +420,12 @@ export default function ProfilePage() {
 
       if (workSamplesError) {
         console.error(workSamplesError);
-        setWorkSamplesError("Bir hata oluştu. Lütfen tekrar deneyin.");
-      } else {
-        setWorkSamplesError("");
+        setError("Bir hata oluştu. Lütfen tekrar deneyin.");
       }
 
       setWorkSamples(
         mapWorkSamples(workSamplesData),
       );
-
-      await loadReviewsAndCompleted(currentPreviewUser.id);
 
       setLoading(false);
       return;
@@ -720,16 +618,12 @@ export default function ProfilePage() {
 
     if (workSamplesError) {
       console.error(workSamplesError);
-      setWorkSamplesError("Bir hata oluştu. Lütfen tekrar deneyin.");
-    } else {
-      setWorkSamplesError("");
+      setError("Bir hata oluştu. Lütfen tekrar deneyin.");
     }
 
     setWorkSamples(
       mapWorkSamples(workSamplesData),
     );
-
-    await loadReviewsAndCompleted(user.id);
 
     setLoading(false);
   }
@@ -1041,7 +935,6 @@ export default function ProfilePage() {
     setWorkServicePickerOpen(false);
     setWorkFieldErrors({});
     setWorkToast(null);
-    setShowWorkForm(false);
 
     setMessage("Çalışma başarıyla eklendi.");
     setAddingWork(false);
@@ -1088,6 +981,121 @@ export default function ProfilePage() {
     setMessage("Çalışma silindi.");
   }
 
+  async function saveProfile() {
+    if (!userId || isPreview) {
+      return;
+    }
+
+    setSaving(true);
+    setMessage(null);
+    setError(null);
+
+    if (!canWorkRemote && !canWorkOnSite) {
+      setError(
+        "En az bir çalışma şeklini seçmelisin: uzaktan veya yerinde.",
+      );
+      setSaving(false);
+      return;
+    }
+
+    if (selectedServices.length === 0) {
+      setError("En az bir hizmet seçmelisin.");
+      setSaving(false);
+      return;
+    }
+
+    if (canWorkOnSite && !city) {
+      setError(
+        "Yerinde çalışabiliyorsan şehir seçmelisin.",
+      );
+      setSaving(false);
+      return;
+    }
+
+    const supabase = createClient();
+
+    const { error: profileError } = await supabase.rpc(
+      "update_my_profile_name",
+      {
+        p_full_name: fullName,
+      },
+    );
+
+    if (profileError) {
+      console.error(profileError);
+      setError("Bir hata oluştu. Lütfen tekrar deneyin.");
+      setSaving(false);
+      return;
+    }
+
+    const {
+      error: providerError,
+    } = await supabase
+      .from("provider_profiles")
+      .upsert(
+        {
+          user_id: userId,
+          bio: bio || null,
+          experience_years:
+            Number(experienceYears) || 0,
+          city: city || null,
+          can_work_remote: canWorkRemote,
+          can_work_on_site: canWorkOnSite,
+        },
+        {
+          onConflict: "user_id",
+        },
+      );
+
+    if (providerError) {
+      console.error(providerError);
+      setError("Bir hata oluştu. Lütfen tekrar deneyin.");
+      setSaving(false);
+      return;
+    }
+
+    const {
+      error: deleteError,
+    } = await supabase
+      .from("provider_services")
+      .delete()
+      .eq("provider_id", userId);
+
+    if (deleteError) {
+      console.error(deleteError);
+      setError("Bir hata oluştu. Lütfen tekrar deneyin.");
+      setSaving(false);
+      return;
+    }
+
+    const serviceRows = selectedServices.map(
+      (serviceId) => ({
+        provider_id: userId,
+        service_id: serviceId,
+      }),
+    );
+
+    const {
+      error: serviceInsertError,
+    } = await supabase
+      .from("provider_services")
+      .insert(serviceRows);
+
+    if (serviceInsertError) {
+      console.error(serviceInsertError);
+      setError("Bir hata oluştu. Lütfen tekrar deneyin.");
+      setSaving(false);
+      return;
+    }
+
+    setMessage(
+      "Profil ve hizmetlerin başarıyla kaydedildi.",
+    );
+
+    setSaving(false);
+    router.push("/profile");
+  }
+
   useEffect(() => {
     loadProfile();
   }, []);
@@ -1116,416 +1124,9 @@ export default function ProfilePage() {
     );
   }
 
-  const publicServices = selectedServices
-    .map((serviceId) => services.find((service) => service.id === serviceId))
-    .filter((service): service is Service => Boolean(service))
-    .map((service) => {
-      const category = categories.find(
-        (item) => item.id === service.category_id,
-      );
-
-      return {
-        id: service.id,
-        name: service.name,
-        category: category
-          ? {
-              id: category.id,
-              name: category.name,
-            }
-          : null,
-      };
-    });
-
-  const publicWorkSamples = workSamples.map((work) => ({
-    id: work.id,
-    title: work.title,
-    description: work.description,
-    projectUrl: work.projectUrl,
-    categories: work.categoryIds
-      .map((id) => {
-        const category = categories.find((item) => item.id === id);
-        return category
-          ? { id: category.id, name: category.name }
-          : null;
-      })
-      .filter(
-        (
-          category,
-        ): category is { id: number; name: string } => category !== null,
-      ),
-    services: work.serviceIds
-      .map((id) => {
-        const service = services.find((item) => item.id === id);
-        return service
-          ? { id: service.id, name: service.name }
-          : null;
-      })
-      .filter(
-        (service): service is { id: number; name: string } =>
-          service !== null,
-      ),
-  }));
-
-  function WorkSampleComposer() {
-    if (!showWorkForm || isPreview) {
-      return null;
-    }
-
-    return (
-              <div className="mt-5 rounded-xl border border-zinc-200 bg-zinc-50/50 p-4 sm:p-5">
-                <div className="space-y-4">
-                <div>
-                  <label
-                    htmlFor="workTitle"
-                    className="mb-2 block text-sm font-medium text-zinc-900"
-                  >
-                    Proje başlığı
-                  </label>
-
-                  <input
-                    id="workTitle"
-                    name="workTitle"
-                    ref={workTitleRef}
-                    type="text"
-                    value={workTitle}
-                    onChange={(e) => {
-                      setWorkTitle(e.target.value);
-                      if (workFieldErrors.title) {
-                        setWorkFieldErrors((current) => ({
-                          ...current,
-                          title: undefined,
-                        }));
-                      }
-                    }}
-                    disabled={addingWork}
-                    aria-invalid={Boolean(workFieldErrors.title)}
-                    placeholder="Örn. Marka sosyal medya kampanyası"
-                    style={inputStyle}
-                    className={`block w-full appearance-none rounded-lg border bg-white px-3 py-2.5 text-sm text-black opacity-100 outline-none focus:ring-0 disabled:cursor-not-allowed disabled:bg-zinc-100 ${
-                      workFieldErrors.title
-                        ? "border-red-300 focus:border-red-400"
-                        : "border-zinc-300 focus:border-zinc-500"
-                    }`}
-                  />
-
-                  {workFieldErrors.title ? (
-                    <p className="mt-2 text-xs text-red-600">
-                      {workFieldErrors.title}
-                    </p>
-                  ) : null}
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="workDescription"
-                    className="mb-2 block text-sm font-medium text-zinc-900"
-                  >
-                    Açıklama
-                  </label>
-
-                  <textarea
-                    id="workDescription"
-                    name="workDescription"
-                    value={workDescription}
-                    onChange={(e) =>
-                      setWorkDescription(
-                        e.target.value,
-                      )
-                    }
-                    rows={3}
-                    disabled={addingWork}
-                    placeholder="Bu çalışmada ne yaptığını kısaca anlat..."
-                    style={inputStyle}
-                    className="block w-full appearance-none resize-none rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm text-black opacity-100 outline-none focus:border-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:bg-zinc-100"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="workProjectUrl"
-                    className="mb-2 block text-sm font-medium text-zinc-900"
-                  >
-                    Proje linki
-                  </label>
-
-                  <input
-                    id="workProjectUrl"
-                    name="workProjectUrl"
-                    type="text"
-                    value={workProjectUrl}
-                    onChange={(e) =>
-                      setWorkProjectUrl(
-                        e.target.value,
-                      )
-                    }
-                    disabled={addingWork}
-                    placeholder="https://..."
-                    style={inputStyle}
-                    className="block w-full appearance-none rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm text-black opacity-100 outline-none focus:border-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:bg-zinc-100"
-                  />
-
-                  <p className="mt-2 text-xs text-zinc-500">
-                    Çalışmanın bulunduğu web sitesi,
-                    Behance, YouTube, Drive vb.
-                    bağlantıyı ekleyebilirsin.
-                  </p>
-                </div>
-
-                <div ref={workCategoriesRef}>
-                  <p className="mb-2 text-sm font-medium text-zinc-900">
-                    Kategoriler
-                  </p>
-
-                  <div
-                    className={`flex flex-wrap items-center gap-2 ${
-                      workFieldErrors.categories
-                        ? "rounded-lg border border-red-300 bg-white px-2 py-2"
-                        : ""
-                    }`}
-                  >
-                    {workCategoryIds.map((categoryId) => {
-                      const category =
-                        portfolioCategories.find(
-                          (item) =>
-                            item.id === categoryId,
-                        ) ??
-                        categories.find(
-                          (item) =>
-                            item.id === categoryId,
-                        );
-
-                      return (
-                        <span
-                          key={categoryId}
-                          className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-700"
-                        >
-                          {category?.name ?? "Kategori"}
-                          <button
-                            type="button"
-                            onClick={() =>
-                              toggleWorkCategory(
-                                categoryId,
-                              )
-                            }
-                            disabled={addingWork}
-                            className="ml-0.5 text-zinc-400 hover:text-zinc-700 disabled:cursor-not-allowed"
-                            aria-label={`${category?.name ?? "Kategori"} seçimini kaldır`}
-                          >
-                            ×
-                          </button>
-                        </span>
-                      );
-                    })}
-
-                    {portfolioCategories.some(
-                      (category) =>
-                        !workCategoryIds.includes(
-                          category.id,
-                        ),
-                    ) ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setWorkCategoryPickerOpen(
-                            (open) => !open,
-                          )
-                        }
-                        disabled={addingWork}
-                        className="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium text-zinc-600 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        + Kategori ekle
-                      </button>
-                    ) : null}
-                  </div>
-
-                  {workFieldErrors.categories ? (
-                    <p className="mt-2 text-xs text-red-600">
-                      {workFieldErrors.categories}
-                    </p>
-                  ) : null}
-
-                  {workCategoryPickerOpen && (
-                    <div className="mt-2 rounded-xl border border-zinc-200 bg-white p-2">
-                      <div className="flex flex-wrap gap-1.5">
-                        {portfolioCategories
-                          .filter(
-                            (category) =>
-                              !workCategoryIds.includes(
-                                category.id,
-                              ),
-                          )
-                          .map((category) => (
-                            <button
-                              key={category.id}
-                              type="button"
-                              onClick={() =>
-                                toggleWorkCategory(
-                                  category.id,
-                                )
-                              }
-                              disabled={addingWork}
-                              className="rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-700 hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {category.name}
-                            </button>
-                          ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {workCategoryIds.length > 0 ? (
-                <div>
-                  <p className="mb-2 text-sm font-medium text-zinc-900">
-                    İlgili hizmetler
-                  </p>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    {workServiceIds.map((serviceId) => {
-                      const service = services.find(
-                        (item) =>
-                          Number(item.id) ===
-                          Number(serviceId),
-                      );
-
-                      if (
-                        !service ||
-                        !workCategoryIds.includes(
-                          service.category_id,
-                        )
-                      ) {
-                        return null;
-                      }
-
-                      return (
-                        <span
-                          key={serviceId}
-                          className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-700"
-                        >
-                          {service.name}
-                          <button
-                            type="button"
-                            onClick={() =>
-                              toggleWorkService(
-                                Number(service.id),
-                              )
-                            }
-                            disabled={addingWork}
-                            className="ml-0.5 text-zinc-400 hover:text-zinc-700 disabled:cursor-not-allowed"
-                            aria-label={`${service.name} seçimini kaldır`}
-                          >
-                            ×
-                          </button>
-                        </span>
-                      );
-                    })}
-
-                    {services.some(
-                      (service) =>
-                        workCategoryIds.includes(
-                          service.category_id,
-                        ) &&
-                        !workServiceIds.includes(
-                          Number(service.id),
-                        ),
-                    ) ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setWorkServicePickerOpen(
-                            (open) => !open,
-                          )
-                        }
-                        disabled={addingWork}
-                        className="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium text-zinc-600 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        + Hizmet seç
-                      </button>
-                    ) : null}
-                  </div>
-
-                  {workServicePickerOpen ? (
-                    <div className="mt-2 space-y-3 rounded-xl border border-zinc-200 bg-white p-3">
-                      {portfolioCategories
-                        .filter((category) =>
-                          workCategoryIds.includes(
-                            category.id,
-                          ),
-                        )
-                        .map((category) => {
-                          const categoryServices =
-                            services.filter(
-                              (service) =>
-                                service.category_id ===
-                                  category.id &&
-                                !workServiceIds.includes(
-                                  Number(service.id),
-                                ),
-                            );
-
-                          if (
-                            categoryServices.length ===
-                            0
-                          ) {
-                            return null;
-                          }
-
-                          return (
-                            <div key={category.id}>
-                              <p className="text-xs font-medium text-zinc-500">
-                                {category.name}
-                              </p>
-
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {categoryServices.map(
-                                  (service) => (
-                                    <button
-                                      key={service.id}
-                                      type="button"
-                                      onClick={() =>
-                                        toggleWorkService(
-                                          Number(
-                                            service.id,
-                                          ),
-                                        )
-                                      }
-                                      disabled={
-                                        addingWork
-                                      }
-                                      className="rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-700 hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"
-                                    >
-                                      {service.name}
-                                    </button>
-                                  ),
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                    </div>
-                  ) : null}
-                </div>
-                ) : null}
-
-                <button
-                  type="button"
-                  onClick={addWorkSample}
-                  disabled={addingWork}
-                  className="w-full rounded-lg bg-black px-5 py-2.5 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
-                >
-                  {addingWork
-                    ? "Ekleniyor..."
-                    : "Çalışma Ekle"}
-                </button>
-                </div>
-              </div>
-    );
-  }
-
-
   return (
-    <main className="min-h-screen bg-white px-6 py-12">
-      <div className="mx-auto max-w-4xl">
+    <main className="min-h-screen bg-zinc-50 px-4 py-10 sm:px-6">
+      <div className="mx-auto max-w-3xl pb-8">
         {isPreview && previewUser && (
           <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             <span className="font-semibold">
@@ -1536,6 +1137,33 @@ export default function ProfilePage() {
             düzenlenemez.
           </div>
         )}
+
+        <div className="mb-8">
+          <p className="text-sm font-medium text-zinc-500">
+            Uzman Paneli
+          </p>
+
+          <Link
+            href="/profile"
+            className="mt-3 inline-block text-sm font-medium text-zinc-500 hover:text-zinc-900"
+          >
+            ← Profile dön
+          </Link>
+
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-zinc-900 sm:text-3xl">
+            Profil bilgilerini düzenle
+          </h1>
+
+          <p className="mt-2 text-sm leading-6 text-zinc-500">
+            Proje sahipleri seni ve hizmetlerini daha iyi
+            tanıyabilsin.
+          </p>
+
+          <p className="mt-2 text-sm leading-6 text-zinc-500">
+            Gördüğün işler hizmetlerin, çalışma şeklin ve
+            (yerinde çalışıyorsan) şehrine göre eşleşir.
+          </p>
+        </div>
 
         {error && (
           <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -1549,92 +1177,420 @@ export default function ProfilePage() {
           </div>
         )}
 
-        <ProviderPublicProfileView
-          profile={{
-            full_name: fullName || null,
-            bio: bio || null,
-            experience_years: Number(experienceYears) || 0,
-            city: city || null,
-            can_work_remote: canWorkRemote,
-            can_work_on_site: canWorkOnSite,
-          }}
-          services={publicServices}
-          workSamples={publicWorkSamples}
-          workSamplesError={workSamplesError}
-          reviewSummary={reviewSummary}
-          reviews={reviews}
-          showReviews={showReviews}
-          onToggleReviews={() => setShowReviews((open) => !open)}
-          completedProjectCount={completedProjectCount}
-          headerActions={
-            isPreview ? null : (
-              <Link
-                href="/profile/edit"
-                className="inline-flex rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-50"
-              >
-                Profil bilgilerini düzenle
-              </Link>
-            )
-          }
-          workSamplesHeaderActions={
-            isPreview ? null : (
-              <button
-                type="button"
-                onClick={() => setShowWorkForm((open) => !open)}
-                className="text-sm font-medium text-zinc-900 hover:text-zinc-600"
-              >
-                {showWorkForm ? "İptal" : "+ Çalışma ekle"}
-              </button>
-            )
-          }
-          workSamplesExtra={
-            <>
-              <p className="mt-2 text-xs leading-5 text-zinc-500">
-                Portfolyon müşterilere gösterilir; iş
-                eşleşmesini değiştirmez.
-              </p>
-              <WorkSampleComposer />
-            </>
-          }
-          renderWorkSampleActions={
-            isPreview
-              ? undefined
-              : (work) => (
-                  <button
-                    type="button"
-                    onClick={() => deleteWorkSample(work.id)}
-                    className="text-sm font-medium text-red-600 hover:text-red-800"
-                  >
-                    Sil
-                  </button>
-                )
-          }
-        />
-      </div>
+        <div className="space-y-5 sm:space-y-6">
+          <section className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6">
+            <h2 className="text-lg font-semibold text-zinc-900">
+              Temel Bilgiler
+            </h2>
 
-      {workToast ? (
-        <div className="fixed right-4 top-4 z-50 w-[min(calc(100%-2rem),22rem)] rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-lg">
-          <div className="flex items-start gap-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-zinc-900">
-                ⚠ {workToast.title}
-              </p>
-              <p className="mt-1 text-sm text-zinc-600">
-                {workToast.detail}
-              </p>
+            <p className="mt-1 text-sm text-zinc-500">
+              Proje sahiplerinin seni tanıması için adını
+              soyadını gir.
+            </p>
+
+            <div className="mt-5">
+              <label
+                htmlFor="fullName"
+                className="mb-2 block text-sm font-medium text-zinc-900"
+              >
+                Ad Soyad
+              </label>
+
+              <input
+                id="fullName"
+                name="fullName"
+                type="text"
+                value={fullName}
+                onChange={(e) =>
+                  setFullName(e.target.value)
+                }
+                autoComplete="name"
+                disabled={isPreview}
+                style={inputStyle}
+                className="block w-full appearance-none rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm text-black opacity-100 outline-none focus:border-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:bg-zinc-100"
+              />
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6">
+            <h2 className="text-lg font-semibold text-zinc-900">
+              Hakkımda
+            </h2>
+
+            <p className="mt-1 text-sm text-zinc-500">
+              Uzmanlığını ve çalışma tarzanı kısaca anlat.
+            </p>
+
+            <div className="mt-5">
+              <label
+                htmlFor="bio"
+                className="mb-2 block text-sm font-medium text-zinc-900"
+              >
+                Hakkında
+              </label>
+
+              <textarea
+                id="bio"
+                name="bio"
+                value={bio}
+                onChange={(e) =>
+                  setBio(e.target.value)
+                }
+                rows={5}
+                disabled={isPreview}
+                style={inputStyle}
+                className="block w-full appearance-none resize-none rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm text-black opacity-100 outline-none focus:border-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:bg-zinc-100"
+                placeholder="Kendinden, uzmanlığından ve yaptığın işlerden bahset..."
+              />
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6">
+            <h2 className="text-lg font-semibold text-zinc-900">
+              Deneyim ve Konum
+            </h2>
+
+            <p className="mt-1 text-sm text-zinc-500">
+              Deneyim süreni ve yerinde çalışabileceğin
+              şehri belirt.
+            </p>
+
+            <div className="mt-5 grid gap-5 sm:grid-cols-2">
+              <div>
+                <label
+                  htmlFor="experienceYears"
+                  className="mb-2 block text-sm font-medium text-zinc-900"
+                >
+                  Deneyim
+                </label>
+
+                <div className="flex items-center gap-3">
+                  <input
+                    id="experienceYears"
+                    name="experienceYears"
+                    type="number"
+                    min="0"
+                    value={experienceYears}
+                    onChange={(e) =>
+                      setExperienceYears(
+                        e.target.value,
+                      )
+                    }
+                    disabled={isPreview}
+                    style={inputStyle}
+                    className="block w-full appearance-none rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm text-black opacity-100 outline-none focus:border-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:bg-zinc-100 sm:w-32"
+                  />
+
+                  <span className="shrink-0 text-sm text-zinc-500">
+                    yıl
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="city"
+                  className="mb-2 block text-sm font-medium text-zinc-900"
+                >
+                  Bulunduğun şehir
+                </label>
+
+                <select
+                  id="city"
+                  name="city"
+                  value={city}
+                  onChange={(e) =>
+                    setCity(e.target.value)
+                  }
+                  disabled={isPreview}
+                  style={inputStyle}
+                  className="block w-full appearance-none rounded-lg border border-zinc-300 bg-white px-3 py-2.5 text-sm text-black opacity-100 outline-none focus:border-zinc-500 focus:ring-0 disabled:cursor-not-allowed disabled:bg-zinc-100"
+                >
+                  <option value="">
+                    Şehir seç
+                  </option>
+
+                  {TURKEY_CITIES.map((cityName) => (
+                    <option
+                      key={cityName}
+                      value={cityName}
+                    >
+                      {cityName}
+                    </option>
+                  ))}
+                </select>
+
+                <p className="mt-2 text-xs text-zinc-500">
+                  Yerinde çalışabileceğin işleri eşleştirmek
+                  için kullanılır.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6">
+            <h2 className="text-lg font-semibold text-zinc-900">
+              Çalışma Şekli
+            </h2>
+
+            <p className="mt-1 text-sm text-zinc-500">
+              En az bir çalışma şekli seçmelisin.
+            </p>
+
+            <div className="mt-5 space-y-3">
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-zinc-200 p-4 transition hover:border-zinc-400">
+                <input
+                  type="checkbox"
+                  checked={canWorkRemote}
+                  onChange={(e) =>
+                    setCanWorkRemote(
+                      e.target.checked,
+                    )
+                  }
+                  disabled={isPreview}
+                  className="mt-0.5 h-4 w-4"
+                />
+
+                <div>
+                  <p className="text-sm font-medium text-zinc-900">
+                    Uzaktan çalışabilirim
+                  </p>
+
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Uzaktan yapılabilecek işleri
+                    kabul edebilirim.
+                  </p>
+                </div>
+              </label>
+
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-zinc-200 p-4 transition hover:border-zinc-400">
+                <input
+                  type="checkbox"
+                  checked={canWorkOnSite}
+                  onChange={(e) =>
+                    setCanWorkOnSite(
+                      e.target.checked,
+                    )
+                  }
+                  disabled={isPreview}
+                  className="mt-0.5 h-4 w-4"
+                />
+
+                <div>
+                  <p className="text-sm font-medium text-zinc-900">
+                    Yerinde çalışabilirim
+                  </p>
+
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Şehir bilgime uygun yerinde
+                    işleri kabul edebilirim.
+                  </p>
+                </div>
+              </label>
             </div>
 
+            <p className="mt-4 text-xs text-zinc-500">
+              İkisini de işaretlersen hibrit ilanlara da
+              uyarsın.
+            </p>
+          </section>
+
+          <section className="rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6">
+            <h2 className="text-lg font-semibold text-zinc-900">
+              Hizmetlerim
+            </h2>
+
+            <p className="mt-1 text-sm text-zinc-500">
+              Yapabildiğin hizmetleri seç. Sana uygun
+              ilanların belirlenmesinde bu seçimler
+              kullanılacak.
+            </p>
+
+            <div className="mt-5">
+              <p className="text-sm font-medium text-zinc-900">
+                Seçilen hizmetler ({selectedServices.length})
+              </p>
+
+              {selectedServiceItems.length === 0 ? (
+                <p className="mt-2 text-sm text-zinc-500">
+                  Henüz hizmet seçmedin.
+                </p>
+              ) : (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {selectedServiceItems.map((service) => (
+                    <span
+                      key={service.id}
+                      className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-700"
+                    >
+                      {service.name}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          toggleService(service.id)
+                        }
+                        disabled={isPreview}
+                        className="ml-0.5 text-zinc-400 hover:text-zinc-700 disabled:cursor-not-allowed"
+                        aria-label={`${service.name} seçimini kaldır`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5">
+              <input
+                id="serviceSearch"
+                type="search"
+                value={serviceQuery}
+                onChange={(event) =>
+                  setServiceQuery(event.target.value)
+                }
+                placeholder="Hizmet ara..."
+                aria-label="Hizmet ara"
+                className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400"
+              />
+            </div>
+
+            <div className="mt-4 divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200">
+              {categories.length === 0 ||
+              services.length === 0 ? (
+                <p className="px-4 py-3 text-sm text-zinc-500">
+                  Seçilebilir hizmet listesi yüklenemedi.
+                  Sayfayı yenileyerek tekrar dene.
+                </p>
+              ) : (
+              categories.map((category) => {
+                const categoryServices =
+                  services.filter(
+                    (service) =>
+                      service.category_id ===
+                      category.id,
+                  );
+
+                const visibleServices = isServiceSearchActive
+                  ? categoryServices.filter((service) =>
+                      foldTurkish(service.name).includes(
+                        serviceSearchNeedle,
+                      ),
+                    )
+                  : categoryServices;
+
+                if (visibleServices.length === 0) {
+                  return null;
+                }
+
+                const selectedCount =
+                  categoryServices.filter((service) =>
+                    selectedServices.includes(service.id),
+                  ).length;
+
+                const isOpen =
+                  isServiceSearchActive ||
+                  openCategoryIds.includes(category.id);
+
+                return (
+                  <div key={category.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isServiceSearchActive) {
+                          return;
+                        }
+
+                        toggleCategoryOpen(category.id);
+                      }}
+                      className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+                    >
+                      <span className="text-sm font-medium text-zinc-900">
+                        {category.name}
+                      </span>
+
+                      <span className="flex shrink-0 items-center gap-2 text-xs text-zinc-500">
+                        {selectedCount > 0
+                          ? `${selectedCount} seçili`
+                          : null}
+                        <span className="text-zinc-400">
+                          {isOpen ? "−" : ">"}
+                        </span>
+                      </span>
+                    </button>
+
+                    {isOpen && (
+                      <ul className="px-4 pb-3">
+                        {visibleServices.map((service) => {
+                          const selected =
+                            selectedServices.includes(
+                              service.id,
+                            );
+
+                          return (
+                            <li key={service.id}>
+                              <label
+                                className={`flex items-center gap-2.5 rounded-md px-1 py-1.5 text-sm ${
+                                  isPreview
+                                    ? "cursor-not-allowed opacity-70"
+                                    : "cursor-pointer hover:bg-zinc-50"
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selected}
+                                  onChange={() =>
+                                    toggleService(
+                                      service.id,
+                                    )
+                                  }
+                                  disabled={isPreview}
+                                  className="h-4 w-4 shrink-0"
+                                />
+
+                                <span
+                                  className={
+                                    selected
+                                      ? "font-medium text-zinc-900"
+                                      : "text-zinc-700"
+                                  }
+                                >
+                                  {service.name}
+                                </span>
+                              </label>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })
+              )}
+            </div>
+
+            {!isPreview &&
+              selectedServices.length === 0 && (
+                <p className="mt-5 rounded-lg bg-zinc-50 px-4 py-3 text-xs text-zinc-500">
+                  En az bir hizmet seçmelisin.
+                </p>
+              )}
+          </section>
+
+          {!isPreview && (
             <button
               type="button"
-              onClick={() => setWorkToast(null)}
-              className="shrink-0 text-zinc-400 hover:text-zinc-700"
-              aria-label="Bildirimi kapat"
+              onClick={saveProfile}
+              disabled={saving}
+              className="w-full rounded-lg bg-black px-5 py-3 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
             >
-              ×
+              {saving
+                ? "Kaydediliyor..."
+                : "Profili Kaydet"}
             </button>
-          </div>
+          )}
+
         </div>
-      ) : null}
+      </div>
     </main>
   );
 }

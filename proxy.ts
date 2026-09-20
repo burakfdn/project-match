@@ -99,9 +99,10 @@ export async function proxy(request: NextRequest) {
    * Çünkü /jobs/new, /jobs altında olmasına rağmen
    * Uzman sayfası değildir.
    *
-   * /jobs/[id]/edit de müşteri rotasıdır.
+   * /jobs/[id]/edit müşteri rotasıdır.
+   * /jobs/[id]/review müşteri veya uzman için ortaktır.
    * Sabit "/jobs/edit" kullanılmaz; id segmentinden sonra
-   * "edit" gelen pathname yakalanır.
+   * "edit" veya "review" gelen pathname yakalanır.
    */
   const customerRoutes = [
     "/jobs/new",
@@ -114,12 +115,25 @@ export async function proxy(request: NextRequest) {
     Boolean(jobPathParts[2]) &&
     jobPathParts[3] === "edit";
 
+  const isJobReviewRoute =
+    jobPathParts[1] === "jobs" &&
+    Boolean(jobPathParts[2]) &&
+    jobPathParts[3] === "review";
+
+  const isJobDetailRoute =
+    jobPathParts[1] === "jobs" &&
+    Boolean(jobPathParts[2]) &&
+    jobPathParts[2] !== "new" &&
+    !jobPathParts[3];
+
+  const isCustomerJobSubroute = isJobEditRoute;
+
   const isCustomerRoute =
     customerRoutes.some(
       (route) =>
         pathname === route ||
         pathname.startsWith(`${route}/`),
-    ) || isJobEditRoute;
+    ) || isCustomerJobSubroute;
 
   if (isCustomerRoute && !customerEnabled) {
     return NextResponse.redirect(
@@ -130,8 +144,12 @@ export async function proxy(request: NextRequest) {
   /*
    * Uzman rotaları
    *
-   * /jobs/new ve /jobs/[id]/edit burada özellikle
-   * hariç tutuluyor.
+   * /jobs/new, /jobs/[id]/edit burada özellikle hariç tutuluyor.
+   * /jobs/[id]/review müşteri veya uzman için ortaktır.
+   *
+   * /jobs/[id] hem kendi ilanına bakan müşteri hem de
+   * eşleşen/erişebilen uzman için ortak detaydır.
+   * Veri erişimini RLS + sayfa mantığı sınırlar.
    */
   const isProviderRoute =
     pathname === "/jobs" ||
@@ -139,7 +157,9 @@ export async function proxy(request: NextRequest) {
       pathname.startsWith("/jobs/") &&
       pathname !== "/jobs/new" &&
       !pathname.startsWith("/jobs/new/") &&
-      !isJobEditRoute
+      !isCustomerJobSubroute &&
+      !isJobDetailRoute &&
+      !isJobReviewRoute
     ) ||
     pathname === "/my-offers" ||
     pathname.startsWith("/my-offers/") ||
@@ -147,6 +167,26 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith("/profile/");
 
   if (isProviderRoute && !providerEnabled) {
+    return NextResponse.redirect(
+      new URL("/", request.url),
+    );
+  }
+
+  if (
+    isJobReviewRoute &&
+    !customerEnabled &&
+    !providerEnabled
+  ) {
+    return NextResponse.redirect(
+      new URL("/", request.url),
+    );
+  }
+
+  if (
+    isJobDetailRoute &&
+    !customerEnabled &&
+    !providerEnabled
+  ) {
     return NextResponse.redirect(
       new URL("/", request.url),
     );

@@ -33,6 +33,10 @@ function getNotificationHref(
     return null;
   }
 
+  if (notification.type === "support_ticket_created") {
+    return notification.href?.trim() || null;
+  }
+
   if (notification.type === "offer_received") {
     return "/my-jobs";
   }

@@ -9,9 +9,13 @@ import {
   type PreviewUser,
 } from "@/lib/preview";
 import { createClient } from "@/lib/supabase/client";
+import { getJobPublicIdMap } from "@/lib/jobs/public-id";
+import { openMessagesDockConversation } from "@/components/MessagesDock";
+import { ProjectTimeline } from "@/components/ProjectTimeline";
 
 type Job = {
   id: number;
+  public_id?: string | null;
   customer_id: string;
   title: string;
   description: string;
@@ -25,6 +29,7 @@ type Job = {
     | "completed"
     | "cancelled";
   created_at: string;
+  target_provider_id: string | null;
   service: {
     id: number;
     name: string;
@@ -54,6 +59,8 @@ type Provider = {
   can_work_remote: boolean;
   can_work_on_site: boolean;
   services: ProviderService[];
+  reviewAverage: string | null;
+  reviewCount: number;
 };
 
 type Offer = {
@@ -165,6 +172,64 @@ type AdminPreviewProviderServiceRow = {
   category_name: string | null;
 };
 
+function summarizeProviderReviews(
+  rows: Array<{
+    provider_id?: string | null;
+    rating?: number | null;
+  }>,
+) {
+  const ratingsByProvider: Record<string, number[]> = {};
+
+  for (const row of rows) {
+    const providerId = row.provider_id;
+    const rating = Number(row.rating);
+
+    if (!providerId || !Number.isFinite(rating)) {
+      continue;
+    }
+
+    if (!ratingsByProvider[providerId]) {
+      ratingsByProvider[providerId] = [];
+    }
+
+    ratingsByProvider[providerId].push(rating);
+  }
+
+  const summaries: Record<
+    string,
+    { average: string; count: number }
+  > = {};
+
+  for (const [providerId, ratings] of Object.entries(
+    ratingsByProvider,
+  )) {
+    const total = ratings.reduce(
+      (sum, value) => sum + value,
+      0,
+    );
+
+    summaries[providerId] = {
+      average: (
+        Math.round((total / ratings.length) * 10) / 10
+      ).toFixed(1),
+      count: ratings.length,
+    };
+  }
+
+  return summaries;
+}
+
+function getReviewSummaryLabel(
+  average: string | null | undefined,
+  count: number | undefined,
+) {
+  if (!count) {
+    return "Henüz değerlendirme yok";
+  }
+
+  return `★ ${average} · ${count} değerlendirme`;
+}
+
 export default function MyJobsPage() {
   const supabase = createClient();
   const router = useRouter();
@@ -192,14 +257,18 @@ export default function MyJobsPage() {
   const [processingOfferId, setProcessingOfferId] =
     useState<number | null>(null);
 
-  const [processingJobId, setProcessingJobId] =
-    useState<number | null>(null);
-
   const [selectedOffers, setSelectedOffers] =
     useState<number[]>([]);
 
   const [comparisonJobId, setComparisonJobId] =
     useState<number | null>(null);
+
+  const [reviewedJobIds, setReviewedJobIds] =
+    useState<Record<number, true>>({});
+  const [showPublishedNotice, setShowPublishedNotice] =
+    useState(false);
+  const [providerNamesById, setProviderNamesById] =
+    useState<Record<string, string>>({});
 
   useEffect(() => {
     const currentPreviewUser =
@@ -208,6 +277,17 @@ export default function MyJobsPage() {
     setPreviewUser(currentPreviewUser);
     loadData(currentPreviewUser);
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+
+    if (params.get("published") !== "1") {
+      return;
+    }
+
+    setShowPublishedNotice(true);
+    router.replace("/my-jobs");
+  }, [router]);
 
   async function loadData(
     currentPreviewUser: PreviewUser | null = previewUser,
@@ -232,6 +312,37 @@ export default function MyJobsPage() {
     }
 
     await loadRealData(user.id);
+  }
+
+  async function loadReviewedJobIds(jobsList: Job[]) {
+    const completedIds = jobsList
+      .filter((job) => job.status === "completed")
+      .map((job) => job.id);
+
+    if (completedIds.length === 0) {
+      setReviewedJobIds({});
+      return;
+    }
+
+    const { data: jobReviews, error: jobReviewsError } =
+      await supabase
+        .from("reviews")
+        .select("job_id")
+        .in("job_id", completedIds);
+
+    if (jobReviewsError) {
+      console.error("Job reviews error:", jobReviewsError);
+      setReviewedJobIds({});
+      return;
+    }
+
+    const nextReviewed: Record<number, true> = {};
+
+    for (const row of jobReviews ?? []) {
+      nextReviewed[Number(row.job_id)] = true;
+    }
+
+    setReviewedJobIds(nextReviewed);
   }
 
   async function loadPreviewData(
@@ -393,6 +504,30 @@ export default function MyJobsPage() {
       void profileResults;
     }
 
+    let reviewSummaries: Record<
+      string,
+      { average: string; count: number }
+    > = {};
+
+    if (providerIds.length > 0) {
+      const { data: reviewsData, error: reviewsError } =
+        await supabase
+          .from("reviews")
+          .select("provider_id, rating")
+          .in("provider_id", providerIds);
+
+      if (reviewsError) {
+        console.error(
+          "Provider reviews error:",
+          reviewsError,
+        );
+      } else {
+        reviewSummaries = summarizeProviderReviews(
+          reviewsData ?? [],
+        );
+      }
+    }
+
     const jobsMap = new Map<
       number,
       Job
@@ -419,6 +554,7 @@ export default function MyJobsPage() {
             row.job_status,
           created_at:
             row.job_created_at,
+          target_provider_id: null,
 
           service:
             row.service_id
@@ -559,19 +695,40 @@ export default function MyJobsPage() {
 
             services:
               previewServices,
+
+            reviewAverage:
+              reviewSummaries[
+                row.offer_provider_id
+              ]?.average ?? null,
+
+            reviewCount:
+              reviewSummaries[
+                row.offer_provider_id
+              ]?.count ?? 0,
           },
         });
       }
     }
 
+    const previewJobs = Array.from(jobsMap.values());
+    const publicIds = await getJobPublicIdMap(
+      supabase,
+      previewJobs.map((job) => job.id),
+    );
+
     setJobs(
-      Array.from(
-        jobsMap.values(),
-      ),
+      previewJobs.map((job) => ({
+        ...job,
+        public_id: publicIds.get(job.id) ?? null,
+      })),
     );
 
     setOffersByJob(
       groupedOffers,
+    );
+
+    await loadReviewedJobIds(
+      Array.from(jobsMap.values()),
     );
 
     setLoading(false);
@@ -588,6 +745,7 @@ export default function MyJobsPage() {
       .select(
         `
         id,
+        public_id,
         customer_id,
         title,
         description,
@@ -596,6 +754,7 @@ export default function MyJobsPage() {
         location_type,
         status,
         created_at,
+        target_provider_id,
         service:services (
           id,
           name,
@@ -656,6 +815,8 @@ export default function MyJobsPage() {
       0
     ) {
       setOffersByJob({});
+      setReviewedJobIds({});
+      setProviderNamesById({});
       setLoading(false);
       return;
     }
@@ -708,10 +869,15 @@ export default function MyJobsPage() {
 
     const providerIds = [
       ...new Set(
-        (offersData ?? []).map(
-          (offer) =>
-            offer.provider_id,
-        ),
+        [
+          ...(offersData ?? []).map(
+            (offer) =>
+              offer.provider_id,
+          ),
+          ...normalizedJobs
+            .map((job) => job.target_provider_id)
+            .filter((id): id is string => Boolean(id)),
+        ],
       ),
     ];
 
@@ -726,6 +892,7 @@ export default function MyJobsPage() {
       const [
         providerProfilesResult,
         providerServicesResult,
+        providerReviewsResult,
       ] = await Promise.all([
         supabase.rpc(
           "customer_get_provider_profiles",
@@ -742,6 +909,11 @@ export default function MyJobsPage() {
               providerIds,
           },
         ),
+
+        supabase
+          .from("reviews")
+          .select("provider_id, rating")
+          .in("provider_id", providerIds),
       ]);
 
       if (
@@ -761,6 +933,20 @@ export default function MyJobsPage() {
           providerServicesResult.error,
         );
       }
+
+      if (providerReviewsResult.error) {
+        console.error(
+          "Provider reviews error:",
+          providerReviewsResult.error,
+        );
+      }
+
+      const reviewSummaries = summarizeProviderReviews(
+        (providerReviewsResult.data ?? []) as Array<{
+          provider_id?: string | null;
+          rating?: number | null;
+        }>,
+      );
 
       const providerProfiles =
         (providerProfilesResult.data ??
@@ -817,11 +1003,33 @@ export default function MyJobsPage() {
                   servicesMap[
                     provider.user_id
                   ] ?? [],
+                reviewAverage:
+                  reviewSummaries[
+                    provider.user_id
+                  ]?.average ?? null,
+                reviewCount:
+                  reviewSummaries[
+                    provider.user_id
+                  ]?.count ?? 0,
               },
             ],
           ),
         );
     }
+
+    const nextProviderNames: Record<string, string> = {};
+
+    for (const [providerId, provider] of Object.entries(
+      providersMap,
+    )) {
+      const fullName = provider.full_name?.trim();
+
+      if (fullName) {
+        nextProviderNames[providerId] = fullName;
+      }
+    }
+
+    setProviderNamesById(nextProviderNames);
 
     const groupedOffers: OffersByJob =
       {};
@@ -862,6 +1070,8 @@ export default function MyJobsPage() {
     setOffersByJob(
       groupedOffers,
     );
+
+    await loadReviewedJobIds(normalizedJobs);
 
     setLoading(false);
   }
@@ -1111,10 +1321,7 @@ export default function MyJobsPage() {
         error,
       );
 
-      setError(
-        error.message ||
-          "Teklif kabul edilirken bir hata oluştu.",
-      );
+      setError("Bir hata oluştu. Lütfen tekrar deneyin.");
 
       setProcessingOfferId(
         null,
@@ -1158,10 +1365,7 @@ export default function MyJobsPage() {
         error,
       );
 
-      setError(
-        error.message ||
-          "Teklif reddedilirken bir hata oluştu.",
-      );
+      setError("Bir hata oluştu. Lütfen tekrar deneyin.");
 
       setProcessingOfferId(
         null,
@@ -1173,52 +1377,6 @@ export default function MyJobsPage() {
     await loadData();
 
     setProcessingOfferId(
-      null,
-    );
-  }
-
-  async function handleCompleteJob(
-    jobId: number,
-  ) {
-    if (previewUser) {
-      return;
-    }
-
-    setProcessingJobId(
-      jobId,
-    );
-
-    setError("");
-
-    const { error } =
-      await supabase.rpc(
-        "complete_my_job",
-        {
-          p_job_id: jobId,
-        },
-      );
-
-    if (error) {
-      console.error(
-        "Complete job error:",
-        error,
-      );
-
-      setError(
-        error.message ||
-          "İş tamamlanırken bir hata oluştu.",
-      );
-
-      setProcessingJobId(
-        null,
-      );
-
-      return;
-    }
-
-    await loadData();
-
-    setProcessingJobId(
       null,
     );
   }
@@ -1237,10 +1395,11 @@ export default function MyJobsPage() {
       );
 
     if (error) {
-      setError(
-        error.message ||
-          "Mesajlaşma başlatılırken bir hata oluştu.",
+      console.error(
+        "Open conversation error:",
+        error,
       );
+      setError("Bir hata oluştu. Lütfen tekrar deneyin.");
       return;
     }
 
@@ -1260,9 +1419,7 @@ export default function MyJobsPage() {
       return;
     }
 
-    router.push(
-      `/messages/${conversationId}`,
-    );
+    openMessagesDockConversation(conversationId, jobId);
   }
 
   function toggleOfferSelection(
@@ -1452,9 +1609,35 @@ export default function MyJobsPage() {
             gelen teklifleri buradan
             yönetebilirsin.
           </p>
+        </div>
 
-          {jobs.length > 0 && (
-            <label className="mt-6 flex max-w-xl flex-col gap-1.5 text-sm">
+        {showPublishedNotice ? (
+          <div className="mb-8 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
+            <p className="text-sm font-medium text-zinc-900">
+              İlanın yayınlandı.
+            </p>
+            {jobs[0]?.title ? (
+              <p className="mt-1 text-sm font-medium text-zinc-800">
+                {jobs[0].title}
+              </p>
+            ) : null}
+            {jobs[0]?.target_provider_id ? (
+              <p className="mt-1 text-sm text-zinc-600">
+                {providerNamesById[jobs[0].target_provider_id]
+                  ? `${providerNamesById[jobs[0].target_provider_id]}'a bildirim gönderildi. Ayrıca eşleşen diğer uzmanlar da ilanını görebilir ve teklif verebilir.`
+                  : "Seçtiğin uzmana bildirim gönderildi. Ayrıca eşleşen diğer uzmanlar da ilanını görebilir ve teklif verebilir."}
+              </p>
+            ) : (
+              <p className="mt-1 text-sm text-zinc-600">
+                İlanın, eşleşen uzmanların görebileceği şekilde
+                yayınlandı.
+              </p>
+            )}
+          </div>
+        ) : null}
+
+        {jobs.length > 0 && (
+          <label className="mb-8 flex max-w-xl flex-col gap-1.5 text-sm">
               <span className="font-medium text-zinc-700">
                 İlan ara
               </span>
@@ -1468,8 +1651,7 @@ export default function MyJobsPage() {
                 className="rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900 outline-none focus:border-zinc-400"
               />
             </label>
-          )}
-        </div>
+        )}
 
         {jobs.length > 0 && (
           <div className="mb-8 rounded-2xl border border-zinc-200 bg-zinc-50 p-4 sm:p-5">
@@ -1553,12 +1735,21 @@ export default function MyJobsPage() {
         )}
 
         {error && (
-          <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+            <p className="text-sm text-red-700">{error}</p>
+            <button
+              type="button"
+              onClick={() => {
+                void loadData();
+              }}
+              className="text-sm font-medium text-red-800 underline-offset-2 hover:underline"
+            >
+              Tekrar dene
+            </button>
           </div>
         )}
 
-        {jobs.length === 0 ? (
+        {!error && jobs.length === 0 ? (
           <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-8 text-center">
             <h2 className="text-lg font-medium text-zinc-900">
               Henüz ilan yayınlamadın
@@ -1569,8 +1760,15 @@ export default function MyJobsPage() {
               uygun uzmanlardan teklif
               almaya başlayabilirsin.
             </p>
+
+            <Link
+              href="/jobs/new"
+              className="mt-6 inline-flex rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800"
+            >
+              İlan oluştur
+            </Link>
           </div>
-        ) : visibleJobs.length === 0 ? (
+        ) : !error && visibleJobs.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 p-8 text-center">
             <h2 className="text-lg font-medium text-zinc-900">
               Bu filtrelere uyan ilan yok.
@@ -1616,6 +1814,11 @@ export default function MyJobsPage() {
                     "accepted",
                 );
 
+              const pendingOfferCount =
+                allOffers.filter(
+                  (offer) => offer.status === "pending",
+                ).length;
+
               return (
                 <section
                   key={job.id}
@@ -1633,12 +1836,12 @@ export default function MyJobsPage() {
                     }
 
                     router.push(
-                      `/jobs/${job.id}`,
+                      `/jobs/${job.public_id || job.id}`,
                     );
                   }}
                 >
                   <Link
-                    href={`/jobs/${job.id}`}
+                    href={`/jobs/${job.public_id || job.id}`}
                     className="-mx-2 flex flex-col gap-5 rounded-xl border-b border-zinc-100 px-2 pb-6 transition hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900 md:flex-row md:items-start md:justify-between"
                   >
                     <div>
@@ -1656,7 +1859,20 @@ export default function MyJobsPage() {
                             job.status,
                           )}
                         </span>
+
+                        {job.status === "open" &&
+                        job.target_provider_id ? (
+                          <span className="text-xs font-medium text-zinc-500">
+                            Davet edildi
+                          </span>
+                        ) : null}
                       </div>
+
+                      {pendingOfferCount > 0 ? (
+                        <p className="mt-2 text-sm text-zinc-500">
+                          {pendingOfferCount} teklif bekliyor
+                        </p>
+                      ) : null}
 
                       <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
                         {job.service && (
@@ -1734,6 +1950,13 @@ export default function MyJobsPage() {
                     </div>
                   </Link>
 
+                  <div className="mt-4">
+                    <ProjectTimeline
+                      jobStatus={job.status}
+                      pendingOfferCount={pendingOfferCount}
+                    />
+                  </div>
+
                   {job.status ===
                     "in_progress" && (
                     <div className="mt-6 flex flex-col gap-4 rounded-xl border border-blue-100 bg-blue-50 p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -1752,7 +1975,7 @@ export default function MyJobsPage() {
                                   acceptedOffer.price,
                                 ),
                               )}`
-                            : "İş tamamlandığında aşağıdaki butonu kullanabilirsin."}
+                            : "Kabul edilen uzman işi tamamlandığında burada güncellenir."}
                         </p>
                       </div>
 
@@ -1775,25 +1998,6 @@ export default function MyJobsPage() {
                               Mesajlaş
                             </button>
                           )}
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleCompleteJob(
-                                job.id,
-                              )
-                            }
-                            disabled={
-                              processingJobId ===
-                              job.id
-                            }
-                            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {processingJobId ===
-                            job.id
-                              ? "İşleniyor..."
-                              : "İşi tamamlandı olarak işaretle"}
-                          </button>
                         </div>
                       )}
                     </div>
@@ -1803,13 +2007,43 @@ export default function MyJobsPage() {
                     "completed" && (
                     <div className="mt-6 rounded-xl border border-emerald-100 bg-emerald-50 p-5">
                       <p className="font-medium text-emerald-900">
-                        Bu iş tamamlandı.
+                        {reviewedJobIds[job.id]
+                          ? "Bu iş tamamlandı. Değerlendirmen alındı."
+                          : "Bu iş tamamlandı."}
                       </p>
 
-                      <p className="mt-1 text-sm text-emerald-700">
-                        İş başarıyla tamamlandı
-                        olarak işaretlendi.
-                      </p>
+                      {reviewedJobIds[job.id] ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            router.push(
+                              `/jobs/${job.public_id || job.id}/review`,
+                            )
+                          }
+                          className="mt-3 text-sm font-medium text-emerald-800 underline-offset-2 hover:underline"
+                        >
+                          Değerlendirmeyi gör
+                        </button>
+                      ) : (
+                        <>
+                          <p className="mt-1 text-sm text-emerald-700">
+                            İş başarıyla tamamlandı
+                            olarak işaretlendi.
+                          </p>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              router.push(
+                                `/jobs/${job.public_id || job.id}/review`,
+                              )
+                            }
+                            className="mt-4 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-800"
+                          >
+                            Uzmanı değerlendir
+                          </button>
+                        </>
+                      )}
                     </div>
                   )}
 
@@ -1826,8 +2060,7 @@ export default function MyJobsPage() {
                         </p>
                       </div>
 
-                      {allOffers.length >
-                        0 && (
+                      {allOffers.length > 1 && (
                         <div className="flex flex-col gap-2 sm:flex-row">
                           <select
                             value={
@@ -1900,6 +2133,12 @@ export default function MyJobsPage() {
                           Bu ilana henüz teklif
                           gelmedi.
                         </p>
+                        {job.status === "open" ? (
+                          <p className="mt-1 text-sm text-zinc-500">
+                            Uygun uzmanlar ilanını görüp teklif
+                            verebilir.
+                          </p>
+                        ) : null}
                       </div>
                     ) : (
                       <>
@@ -1920,40 +2159,146 @@ export default function MyJobsPage() {
                                   provider,
                                 );
 
-                              const otherServices =
-                                provider?.services.filter(
-                                  (service) =>
-                                    service.id !==
-                                    job.service?.id,
-                                ) ?? [];
+                              const offerMessageExcerpt =
+                                offer.message
+                                  ? offer.message
+                                      .trim()
+                                      .length > 180
+                                    ? `${offer.message.trim().slice(0, 180).trimEnd()}…`
+                                    : offer.message.trim()
+                                  : "";
 
                               return (
                                 <div
                                   key={
                                     offer.id
                                   }
-                                  className={`rounded-xl border p-5 transition ${
+                                  className={`rounded-xl border bg-white p-4 ${
                                     isSelected
-                                      ? "border-zinc-900 bg-zinc-50"
-                                      : "border-zinc-200 bg-white"
+                                      ? "border-zinc-900"
+                                      : "border-zinc-200"
                                   }`}
                                 >
-                                  <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-                                    <div className="flex gap-4">
-                                      <input
-                                        type="checkbox"
-                                        checked={
-                                          isSelected
-                                        }
-                                        onChange={() =>
-                                          toggleOfferSelection(
-                                            offer.id,
-                                          )
-                                        }
-                                        className="mt-1 h-4 w-4"
-                                      />
+                                  <div className="flex gap-3">
+                                    <input
+                                      type="checkbox"
+                                      checked={
+                                        isSelected
+                                      }
+                                      onChange={() =>
+                                        toggleOfferSelection(
+                                          offer.id,
+                                        )
+                                      }
+                                      className="mt-1 h-4 w-4 shrink-0"
+                                    />
 
-                                      <div className="min-w-0">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                        <div className="min-w-0">
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <h4 className="text-sm font-semibold text-zinc-900">
+                                              {provider?.full_name?.trim() ||
+                                                "İsimsiz Uzman"}
+                                            </h4>
+
+                                            <span
+                                              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                                                offer.status ===
+                                                "pending"
+                                                  ? "bg-amber-50 text-amber-700"
+                                                  : offer.status ===
+                                                      "accepted"
+                                                    ? "bg-emerald-50 text-emerald-700"
+                                                    : "bg-red-50 text-red-700"
+                                              }`}
+                                            >
+                                              {offer.status ===
+                                              "pending"
+                                                ? "Bekliyor"
+                                                : offer.status ===
+                                                    "accepted"
+                                                  ? "Kabul edildi"
+                                                  : "Reddedildi"}
+                                            </span>
+                                          </div>
+
+                                          <p className="mt-1 text-xs text-zinc-500">
+                                            {getReviewSummaryLabel(
+                                              provider?.reviewAverage,
+                                              provider?.reviewCount,
+                                            )}
+                                          </p>
+
+                                          <p className="mt-1 text-xs text-zinc-500">
+                                            {[
+                                              `${provider?.experience_years ?? 0} yıl deneyim`,
+                                              provider?.city?.trim() ||
+                                                null,
+                                              provider
+                                                ? getProviderWorkLabel(
+                                                    provider,
+                                                  )
+                                                : null,
+                                            ]
+                                              .filter(
+                                                Boolean,
+                                              )
+                                              .join(" · ")}
+                                          </p>
+                                        </div>
+
+                                        <div className="shrink-0 sm:text-right">
+                                          <p className="text-lg font-semibold tracking-tight text-zinc-900">
+                                            {formatPrice(
+                                              Number(
+                                                offer.price,
+                                              ),
+                                            )}
+                                          </p>
+
+                                          <p className="mt-0.5 text-xs text-zinc-400">
+                                            {`Proje bütçesi: ${
+                                              job.budget !==
+                                              null
+                                                ? formatPrice(
+                                                    Number(
+                                                      job.budget,
+                                                    ),
+                                                  )
+                                                : "Belirtilmedi"
+                                            }`}
+                                          </p>
+                                        </div>
+                                      </div>
+
+                                      {matchingService ? (
+                                        <p className="mt-3 text-xs text-zinc-500">
+                                          {`Eşleşen hizmet · ${matchingService.name}`}
+                                        </p>
+                                      ) : null}
+
+                                      {offerMessageExcerpt ? (
+                                        <div className="mt-3">
+                                          <p className="text-xs font-medium text-zinc-400">
+                                            Teklif mesajı
+                                          </p>
+
+                                          <p className="mt-1 text-sm leading-6 text-zinc-600">
+                                            {
+                                              offerMessageExcerpt
+                                            }
+                                          </p>
+                                        </div>
+                                      ) : null}
+
+                                      <p className="mt-3 text-xs text-zinc-400">
+                                        {formatDate(
+                                          offer.created_at,
+                                        )}
+                                      </p>
+
+                                      <div className="mt-4 flex flex-wrap items-center gap-2">
                                         {provider ? (
                                           <button
                                             type="button"
@@ -1962,246 +2307,79 @@ export default function MyJobsPage() {
                                                 `/providers/${provider.user_id}`,
                                               )
                                             }
-                                            className="cursor-pointer text-left text-lg font-semibold text-zinc-900 transition hover:text-zinc-600 hover:underline"
+                                            className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
                                           >
-                                            {provider.full_name?.trim() ||
-                                              "İsimsiz Uzman"}
+                                            Profili Gör
                                           </button>
-                                        ) : (
-                                          <h4 className="text-lg font-semibold text-zinc-900">
-                                            İsimsiz Uzman
-                                          </h4>
-                                        )}
+                                        ) : null}
 
-                                        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-zinc-500">
-                                          <span>
-                                            {provider
-                                              ?.experience_years ??
-                                              0}{" "}
-                                            yıl
-                                            deneyim
-                                          </span>
-
-                                          {provider?.city && (
-                                            <span>
-                                              {
-                                                provider.city
-                                              }
-                                            </span>
-                                          )}
-
-                                          {provider && (
-                                            <span>
-                                              {getProviderWorkLabel(
-                                                provider,
-                                              )}
-                                            </span>
-                                          )}
-                                        </div>
-
-                                        {provider && (
-                                          <div className="mt-4">
-                                            {matchingService && (
-                                              <>
-                                                <p className="text-xs font-medium uppercase tracking-wide text-zinc-400">
-                                                  İlanla eşleşen hizmet
-                                                </p>
-
-                                                <div className="mt-2">
-                                                  <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700">
-                                                    {
-                                                      matchingService.name
-                                                    }
-                                                  </span>
-                                                </div>
-                                              </>
-                                            )}
-
-                                            {otherServices.length >
-                                              0 && (
-                                              <div
-                                                className={
-                                                  matchingService
-                                                    ? "mt-3"
-                                                    : ""
-                                                }
-                                              >
-                                                <p className="text-xs font-medium uppercase tracking-wide text-zinc-400">
-                                                  Diğer hizmetler
-                                                </p>
-
-                                                <div className="mt-2 flex flex-wrap gap-2">
-                                                  {otherServices
-                                                    .slice(
-                                                      0,
-                                                      4,
-                                                    )
-                                                    .map(
-                                                      (
-                                                        service,
-                                                      ) => (
-                                                        <span
-                                                          key={
-                                                            service.id
-                                                          }
-                                                          className="rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-600"
-                                                        >
-                                                          {
-                                                            service.name
-                                                          }
-                                                        </span>
-                                                      ),
-                                                    )}
-
-                                                  {otherServices.length >
-                                                    4 && (
-                                                    <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-500">
-                                                      +
-                                                      {otherServices.length -
-                                                        4}{" "}
-                                                      hizmet
-                                                    </span>
-                                                  )}
-                                                </div>
-                                              </div>
-                                            )}
-
-                                            {provider.services
-                                              .length ===
-                                              0 && (
-                                              <p className="mt-1 text-sm text-zinc-400">
-                                                Hizmet bilgisi yok
-                                              </p>
-                                            )}
-                                          </div>
-                                        )}
-
-                                        {provider?.bio && (
-                                          <div className="mt-4 max-w-2xl">
-                                            <p className="text-xs font-medium uppercase tracking-wide text-zinc-400">
-                                              Hakkında
-                                            </p>
-
-                                            <p className="mt-1 text-sm leading-6 text-zinc-600">
-                                              {
-                                                provider.bio
-                                              }
-                                            </p>
-                                          </div>
-                                        )}
-
-                                        {offer.message && (
-                                          <div className="mt-4 max-w-2xl rounded-lg bg-zinc-50 p-3">
-                                            <p className="text-xs font-medium uppercase tracking-wide text-zinc-400">
-                                              Teklif mesajı
-                                            </p>
-
-                                            <p className="mt-1 text-sm leading-6 text-zinc-600">
-                                              {
-                                                offer.message
-                                              }
-                                            </p>
-                                          </div>
-                                        )}
-
-                                        <p className="mt-3 text-xs text-zinc-400">
-                                          {formatDate(
-                                            offer.created_at,
-                                          )}
-                                        </p>
-                                      </div>
-                                    </div>
-
-                                    <div className="flex flex-col items-start gap-3 lg:items-end">
-                                      <div className="text-xl font-semibold text-zinc-900">
-                                        {formatPrice(
-                                          Number(
-                                            offer.price,
-                                          ),
-                                        )}
-                                      </div>
-
-                                      <span
-                                        className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                                          offer.status ===
-                                          "pending"
-                                            ? "bg-amber-50 text-amber-700"
-                                            : offer.status ===
-                                                "accepted"
-                                              ? "bg-emerald-50 text-emerald-700"
-                                              : "bg-zinc-100 text-zinc-500"
-                                        }`}
-                                      >
                                         {offer.status ===
-                                        "pending"
-                                          ? "Bekliyor"
-                                          : offer.status ===
-                                              "accepted"
-                                            ? "Kabul edildi"
-                                            : "Reddedildi"}
-                                      </span>
+                                          "pending" &&
+                                          job.status ===
+                                            "open" &&
+                                          (previewUser ? (
+                                            <span className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-sm text-zinc-500">
+                                              Önizlemede işlem yapılamaz
+                                            </span>
+                                          ) : (
+                                            <>
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  handleRejectOffer(
+                                                    offer.id,
+                                                  )
+                                                }
+                                                disabled={
+                                                  processingOfferId ===
+                                                  offer.id
+                                                }
+                                                className="rounded-lg border border-zinc-200 px-3 py-1.5 text-sm text-zinc-500 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                              >
+                                                Reddet
+                                              </button>
 
-                                      {offer.status ===
-                                        "pending" &&
-                                        job.status ===
-                                          "open" &&
-                                        (previewUser ? (
-                                          <span className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">
-                                            Önizlemede işlem yapılamaz
-                                          </span>
-                                        ) : (
-                                          <div className="flex gap-2">
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                handleRejectOffer(
-                                                  offer.id,
-                                                )
-                                              }
-                                              disabled={
-                                                processingOfferId ===
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  handleAcceptOffer(
+                                                    offer.id,
+                                                  )
+                                                }
+                                                disabled={
+                                                  processingOfferId ===
+                                                  offer.id
+                                                }
+                                                className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                                              >
+                                                {processingOfferId ===
                                                 offer.id
-                                              }
-                                              className="rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-600 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                            >
-                                              Reddet
-                                            </button>
+                                                  ? "İşleniyor..."
+                                                  : "Kabul et"}
+                                              </button>
 
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                handleAcceptOffer(
-                                                  offer.id,
-                                                )
-                                              }
-                                              disabled={
-                                                processingOfferId ===
-                                                offer.id
-                                              }
-                                              className="rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
-                                            >
-                                              {processingOfferId ===
-                                              offer.id
-                                                ? "İşleniyor..."
-                                                : "Kabul et"}
-                                            </button>
-                                          </div>
-                                        ))}
+                                              <p className="w-full text-xs text-zinc-500">
+                                                Bu teklifi kabul ettiğinde diğer
+                                                bekleyen teklifler reddedilir.
+                                              </p>
+                                            </>
+                                          ))}
 
-                                      {offer.status ===
-                                        "accepted" && (
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            handleOpenConversation(
-                                              job.id,
-                                            )
-                                          }
-                                          className="rounded-lg bg-zinc-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-zinc-800"
-                                        >
-                                          Mesajlaş
-                                        </button>
-                                      )}
+                                        {offer.status ===
+                                          "accepted" && (
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              handleOpenConversation(
+                                                job.id,
+                                              )
+                                            }
+                                            className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800"
+                                          >
+                                            Mesajlaş
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
@@ -2246,17 +2424,22 @@ export default function MyJobsPage() {
                   </div>
 
                   <div className="mt-6 flex flex-col items-stretch gap-3 border-t border-zinc-100 pt-5 sm:flex-row sm:items-center sm:justify-end">
-                    {job.status === "open" && (
+                    {job.status === "open" &&
+                    pendingOfferCount > 0 ? (
+                      <p className="text-center text-sm text-zinc-500 sm:text-left">
+                        Teklif varken ilan düzenlenemez.
+                      </p>
+                    ) : job.status === "open" ? (
                       <Link
-                        href={`/jobs/${job.id}/edit`}
+                        href={`/jobs/${job.public_id || job.id}/edit`}
                         className="rounded-lg border border-zinc-200 px-4 py-2 text-center text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900"
                       >
                         İlanı Düzenle
                       </Link>
-                    )}
+                    ) : null}
 
                     <Link
-                      href={`/jobs/${job.id}`}
+                      href={`/jobs/${job.public_id || job.id}`}
                       className="text-center text-sm font-medium text-zinc-900 transition hover:text-zinc-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900 sm:text-right"
                     >
                       İlan Detayını Gör →

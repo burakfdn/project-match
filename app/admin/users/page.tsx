@@ -226,9 +226,35 @@ export default function AdminUsersPage() {
             Project Match
           </Link>
 
-          <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-600">
-            Admin Paneli
-          </span>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/admin"
+              className="text-sm font-medium text-zinc-600 hover:text-zinc-950"
+            >
+              Admin Paneli
+            </Link>
+            <Link
+              href="/admin/users"
+              className="text-sm font-medium text-zinc-950"
+            >
+              Kullanıcılar
+            </Link>
+            <Link
+              href="/admin/support"
+              className="text-sm font-medium text-zinc-600 hover:text-zinc-950"
+            >
+              Destek Talepleri
+            </Link>
+            <Link
+              href="/admin/activity"
+              className="text-sm font-medium text-zinc-600 hover:text-zinc-950"
+            >
+              Aktivite Arşivi
+            </Link>
+            <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-600">
+              Admin Paneli
+            </span>
+          </div>
         </div>
       </nav>
 

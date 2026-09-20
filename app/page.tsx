@@ -157,7 +157,7 @@ export default function HomePage() {
 
     setPreviewUser(null);
 
-    router.push("/admin/users");
+    router.push("/admin");
     router.refresh();
   }
 
@@ -181,12 +181,13 @@ export default function HomePage() {
             </p>
 
             <h1 className="mt-4 text-5xl font-semibold tracking-tight text-zinc-950 sm:text-6xl">
-              Doğru uzmanı, doğru projeyle buluştur.
+              İşi yapabilecek kişiler teklif verir.
             </h1>
 
             <p className="mt-6 max-w-2xl text-lg leading-8 text-zinc-600">
-              İhtiyacını yayınla. Hizmetlerinle eşleşen
-              uzmanlardan teklif al.
+              İhtiyacını yayınla. İlanın yalnızca hizmeti ve
+              çalışma koşulları uyan uzmanlara görünür; onlar
+              teklif verir.
             </p>
 
             <div className="mt-8 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
@@ -268,9 +269,9 @@ export default function HomePage() {
             </h2>
 
             <p className="mt-4 text-sm leading-6 text-zinc-600 sm:text-base">
-              Project Match, herkese aynı ilanları göstermek
-              yerine uzmanlık ve çalışma koşullarına göre uygun
-              projeleri öne çıkarır.
+              Project Match herkese aynı ilanları göstermez.
+              İlan, hizmeti ve çalışma koşulları uyan uzmanlara
+              görünür.
             </p>
           </div>
 
@@ -439,6 +440,13 @@ export default function HomePage() {
                   <p className="mt-3 text-zinc-600">
                     İhtiyacını yayınla ve uygun uzmanlardan teklif al.
                   </p>
+
+                  <Link
+                    href="/providers"
+                    className="mt-3 inline-block text-sm font-medium text-violet-700 hover:text-violet-900"
+                  >
+                    Uzmanları keşfet →
+                  </Link>
                 </div>
 
                 {bothModesAvailable && (
@@ -594,7 +602,7 @@ export default function HomePage() {
         {isAdmin && !previewUser && (
           <div className="mt-10 border-t border-zinc-200 pt-6">
             <Link
-              href="/admin/users"
+              href="/admin"
               className="text-sm font-medium text-zinc-600 hover:text-zinc-950"
             >
               Admin Paneli →

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/client";
+import { ProviderPublicProfileView } from "@/components/provider-public-profile";
 
 type ProviderProfile = {
   user_id: string;
@@ -156,7 +157,7 @@ export default function ProviderProfilePage() {
 
   useEffect(() => {
     if (!providerId) {
-      setError("Uzman bulunamadı.");
+      setError("Bu içeriğe şu an erişilemiyor.");
       setLoading(false);
       return;
     }
@@ -204,10 +205,7 @@ export default function ProviderProfilePage() {
         profileError,
       );
 
-      setError(
-        profileError.message ||
-          "Uzman profili yüklenirken bir hata oluştu.",
-      );
+      setError("Bir hata oluştu. Lütfen tekrar deneyin.");
 
       setLoading(false);
       return;
@@ -229,9 +227,7 @@ export default function ProviderProfilePage() {
       ) ?? null;
 
     if (!providerRow) {
-      setError(
-        "Bu uzmanın profili görüntülenemiyor.",
-      );
+      setError("Bu içeriğe şu an erişilemiyor.");
 
       setLoading(false);
       return;
@@ -408,50 +404,30 @@ export default function ProviderProfilePage() {
       }
     }
 
-    const { data: acceptedOffersData, error: acceptedOffersError } =
-      await supabase
-        .from("offers")
-        .select("job_id")
-        .eq("provider_id", providerId)
-        .eq("status", "accepted");
+    const {
+      data: completedCountData,
+      error: completedCountError,
+    } = await supabase.rpc(
+      "get_provider_completed_project_count",
+      {
+        p_provider_id: providerId,
+      },
+    );
 
-    if (acceptedOffersError) {
+    if (completedCountError) {
       console.error(
         "Provider completed projects error:",
-        acceptedOffersError,
+        completedCountError,
       );
       setCompletedProjectCount(0);
     } else {
-      const jobIds = [
-        ...new Set(
-          (acceptedOffersData ?? [])
-            .map((offer) => Number(offer.job_id))
-            .filter((id) => Number.isFinite(id) && id > 0),
-        ),
-      ];
+      const completedCount = Number(completedCountData);
 
-      if (jobIds.length === 0) {
-        setCompletedProjectCount(0);
-      } else {
-        const { data: completedJobsData, error: completedJobsError } =
-          await supabase
-            .from("jobs")
-            .select("id, status")
-            .in("id", jobIds)
-            .eq("status", "completed");
-
-        if (completedJobsError) {
-          console.error(
-            "Provider completed jobs error:",
-            completedJobsError,
-          );
-          setCompletedProjectCount(0);
-        } else {
-          setCompletedProjectCount(
-            (completedJobsData ?? []).length,
-          );
-        }
-      }
+      setCompletedProjectCount(
+        Number.isFinite(completedCount) && completedCount > 0
+          ? completedCount
+          : 0,
+      );
     }
 
     setLoading(false);
@@ -541,122 +517,6 @@ export default function ProviderProfilePage() {
     });
   }
 
-  function normalizeUrl(url: string) {
-    const trimmed = url.trim();
-
-    if (!trimmed) {
-      return "";
-    }
-
-    if (/^https?:\/\//i.test(trimmed)) {
-      return trimmed;
-    }
-
-    return `https://${trimmed}`;
-  }
-
-  function formatReviewDate(value: string) {
-    if (!value) {
-      return "";
-    }
-
-    const date = new Date(value);
-
-    if (Number.isNaN(date.getTime())) {
-      return "";
-    }
-
-    return date.toLocaleDateString("tr-TR", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    });
-  }
-
-  function getInitials(
-    name: string | null,
-  ) {
-    if (!name?.trim()) {
-      return "U";
-    }
-
-    const parts = name
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean);
-
-    if (parts.length === 1) {
-      return parts[0]
-        .slice(0, 2)
-        .toUpperCase();
-    }
-
-    return (
-      parts[0][0] +
-      parts[parts.length - 1][0]
-    ).toUpperCase();
-  }
-
-  function getGroupedServices() {
-    const groups = new Map<
-      string,
-      {
-        categoryId: number | null;
-        categoryName: string;
-        services: ProviderService[];
-      }
-    >();
-
-    for (const service of services) {
-      const categoryName =
-        service.category?.name?.trim() ||
-        "Diğer";
-
-      const categoryId =
-        service.category?.id ?? null;
-
-      const key =
-        categoryId !== null
-          ? `category-${categoryId}`
-          : `category-${categoryName}`;
-
-      if (!groups.has(key)) {
-        groups.set(key, {
-          categoryId,
-          categoryName,
-          services: [],
-        });
-      }
-
-      groups.get(key)!.services.push(
-        service,
-      );
-    }
-
-    return Array.from(
-      groups.values(),
-    ).sort((a, b) => {
-      if (
-        a.categoryId === null &&
-        b.categoryId !== null
-      ) {
-        return 1;
-      }
-
-      if (
-        a.categoryId !== null &&
-        b.categoryId === null
-      ) {
-        return -1;
-      }
-
-      return a.categoryName.localeCompare(
-        b.categoryName,
-        "tr-TR",
-      );
-    });
-  }
-
   if (loading) {
     return (
       <main className="min-h-screen bg-white px-6 py-12">
@@ -684,16 +544,13 @@ export default function ProviderProfilePage() {
           <div className="rounded-2xl border border-red-200 bg-red-50 p-6">
             <p className="text-sm text-red-700">
               {error ||
-                "Uzman profili bulunamadı."}
+                "Bu içeriğe şu an erişilemiyor."}
             </p>
           </div>
         </div>
       </main>
     );
   }
-
-  const groupedServices =
-    getGroupedServices();
 
   const isOwnProfile =
     currentUserId !== null &&
@@ -702,295 +559,74 @@ export default function ProviderProfilePage() {
   const showCustomerActions =
     customerEnabled && !isOwnProfile;
 
-  const aboutText = profile.bio?.trim() ?? "";
-  const visibleServiceGroups = groupedServices.filter(
-    (group) => group.services.length > 0,
-  );
-
   return (
     <main className="min-h-screen bg-white px-6 py-12">
       <div className="mx-auto max-w-4xl">
-        <button
-          type="button"
-          onClick={() => router.push("/providers")}
-          className="mb-8 text-sm font-medium text-zinc-500 transition hover:text-zinc-900"
-        >
-          ← Uzmanlara dön
-        </button>
-
-        <header className="flex flex-col gap-5 sm:flex-row sm:items-center">
-          <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-zinc-900 text-2xl font-semibold text-white">
-            {getInitials(profile.full_name)}
-          </div>
-
-          <div>
-            <h1 className="text-3xl font-semibold tracking-tight text-zinc-900">
-              {profile.full_name?.trim() ||
-                "İsimsiz Uzman"}
-            </h1>
-
-            <p className="mt-2 text-sm text-zinc-500">
-              {profile.experience_years} yıl deneyim
-              {profile.city?.trim()
-                ? ` · ${profile.city.trim()}`
-                : ""}
-            </p>
-
-            {reviewSummary ? (
+        <ProviderPublicProfileView
+          profile={profile}
+          services={services}
+          workSamples={workSamples}
+          workSamplesError={workSamplesError}
+          reviewSummary={reviewSummary}
+          reviews={reviews}
+          showReviews={showReviews}
+          onToggleReviews={() =>
+            setShowReviews((open) => !open)
+          }
+          completedProjectCount={completedProjectCount}
+          backLink={
+            <button
+              type="button"
+              onClick={() => router.push("/providers")}
+              className="mb-8 text-sm font-medium text-zinc-500 transition hover:text-zinc-900"
+            >
+              ← Uzmanlara dön
+            </button>
+          }
+          headerActions={
+            showCustomerActions ? (
               <button
                 type="button"
                 onClick={() =>
-                  setShowReviews((open) => !open)
+                  router.push(
+                    `/jobs/new?provider_id=${encodeURIComponent(profile.user_id)}`,
+                  )
                 }
-                className="mt-1 text-left text-sm text-zinc-500 hover:text-zinc-700"
-                aria-expanded={showReviews}
+                className="w-full rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 sm:w-auto"
               >
-                {`⭐ ${reviewSummary.average} · ${reviewSummary.count} değerlendirme`}
+                Bu Uzman İçin Proje Oluştur
               </button>
-            ) : (
-              <p className="mt-1 text-sm text-zinc-500">
-                Henüz değerlendirme yok
-              </p>
-            )}
+            ) : null
+          }
+          footer={
+            showCustomerActions ? (
+              <section className="mt-10 rounded-xl border border-zinc-200 p-5">
+                <h2 className="text-base font-semibold text-zinc-900">
+                  Bu uzmanla çalışmak mı istiyorsun?
+                </h2>
 
-            <p className="mt-1 text-sm text-zinc-500">
-              {completedProjectCount > 0
-                ? `💼 ${completedProjectCount} proje tamamladı`
-                : "💼 Henüz proje tamamlamadı"}
-            </p>
+                <p className="mt-2 text-sm leading-6 text-zinc-600">
+                  İhtiyacını anlatan bir proje oluştur. Uygunluk
+                  durumuna göre bu uzman sana teklif verebilir.
+                </p>
 
-            {(profile.can_work_remote ||
-              profile.can_work_on_site) && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {profile.can_work_remote ? (
-                  <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-700">
-                    Uzaktan
-                  </span>
-                ) : null}
-
-                {profile.can_work_on_site ? (
-                  <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-700">
-                    Yerinde
-                  </span>
-                ) : null}
-              </div>
-            )}
-          </div>
-        </header>
-
-        {showReviews && reviewSummary ? (
-          <section className="mt-6 rounded-xl border border-zinc-200 p-4 sm:p-5">
-            <h2 className="text-base font-semibold text-zinc-900">
-              Değerlendirmeler
-            </h2>
-
-            <p className="mt-1 text-sm text-zinc-500">
-              {`⭐ ${reviewSummary.average} · ${reviewSummary.count} değerlendirme`}
-            </p>
-
-            <div className="mt-4 space-y-4">
-              {reviews.map((review, index) => {
-                const rating = Math.min(
-                  5,
-                  Math.max(0, Math.round(review.rating)),
-                );
-                const reviewDate = formatReviewDate(
-                  review.created_at,
-                );
-
-                return (
-                  <article
-                    key={`${review.created_at}-${index}`}
-                    className="border-t border-zinc-100 pt-4 first:border-t-0 first:pt-0"
-                  >
-                    <p
-                      className="text-sm tracking-wide text-zinc-800"
-                      aria-label={`${rating} yıldız`}
-                    >
-                      {"★★★★★".slice(0, rating)}
-                      <span className="text-zinc-300">
-                        {"★★★★★".slice(rating)}
-                      </span>
-                    </p>
-
-                    {review.comment ? (
-                      <p className="mt-2 text-sm leading-6 text-zinc-600">
-                        {review.comment}
-                      </p>
-                    ) : null}
-
-                    {reviewDate ? (
-                      <p className="mt-2 text-xs text-zinc-400">
-                        {reviewDate}
-                      </p>
-                    ) : null}
-                  </article>
-                );
-              })}
-            </div>
-          </section>
-        ) : null}
-
-        {aboutText ? (
-          <section className="mt-10">
-            <h2 className="text-base font-semibold text-zinc-900">
-              Hakkımda
-            </h2>
-
-            <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-zinc-600">
-              {aboutText}
-            </p>
-          </section>
-        ) : null}
-
-        <section className="mt-10">
-          <h2 className="text-base font-semibold text-zinc-900">
-            Hizmetler
-          </h2>
-
-          {visibleServiceGroups.length > 0 ? (
-            <div className="mt-4 space-y-5">
-              {visibleServiceGroups.map((group) => (
-                <div
-                  key={
-                    group.categoryId !== null
-                      ? `category-${group.categoryId}`
-                      : group.categoryName
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push(
+                      `/jobs/new?provider_id=${encodeURIComponent(profile.user_id)}`,
+                    )
                   }
+                  className="mt-4 w-full rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 sm:w-auto"
                 >
-                  <h3 className="text-sm font-medium text-zinc-800">
-                    {group.categoryName}
-                  </h3>
-
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {group.services.map((service) => (
-                      <span
-                        key={service.id}
-                        className="inline-flex rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-700"
-                      >
-                        {service.name}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="mt-3 text-sm text-zinc-400">
-              Hizmet bilgisi bulunmuyor.
-            </p>
-          )}
-        </section>
-
-        <section className="mt-10">
-          <h2 className="text-base font-semibold text-zinc-900">
-            Çalışmalarım
-          </h2>
-
-          {workSamplesError ? (
-            <p className="mt-3 text-sm text-zinc-400">
-              {workSamplesError}
-            </p>
-          ) : workSamples.length === 0 ? (
-            <p className="mt-3 text-sm text-zinc-400">
-              Henüz portfolyo çalışması eklenmemiş.
-            </p>
-          ) : (
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              {workSamples.map((work) => {
-                const projectHref = work.projectUrl
-                  ? normalizeUrl(work.projectUrl)
-                  : "";
-
-                return (
-                  <article
-                    key={work.id}
-                    className="flex flex-col rounded-xl border border-zinc-200 p-5"
-                  >
-                    <h3 className="text-sm font-semibold text-zinc-900">
-                      {work.title}
-                    </h3>
-
-                    {work.description ? (
-                      <p className="mt-2 text-sm leading-6 text-zinc-600">
-                        {work.description}
-                      </p>
-                    ) : null}
-
-                    {work.categories.length > 0 ? (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {work.categories.map((category) => (
-                          <span
-                            key={`${work.id}-${category.id}`}
-                            className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-xs font-medium text-zinc-700"
-                          >
-                            {category.name}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-
-                    {work.services.length > 0 ? (
-                      <div
-                        className={`flex flex-wrap gap-2 ${
-                          work.categories.length > 0
-                            ? "mt-2"
-                            : "mt-3"
-                        }`}
-                      >
-                        {work.services.map((service) => (
-                          <span
-                            key={`${work.id}-service-${service.id}`}
-                            className="rounded-full border border-zinc-200 px-2 py-0.5 text-[11px] font-medium text-zinc-600"
-                          >
-                            {service.name}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-
-                    {projectHref ? (
-                      <a
-                        href={projectHref}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mt-4 truncate text-sm font-medium text-zinc-900 underline underline-offset-4 hover:text-zinc-600"
-                      >
-                        Projeyi Gör ↗
-                      </a>
-                    ) : null}
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        {showCustomerActions ? (
-          <section className="mt-10 rounded-xl border border-zinc-200 p-5">
-            <h2 className="text-base font-semibold text-zinc-900">
-              Bu uzmanla çalışmak mı istiyorsun?
-            </h2>
-
-            <p className="mt-2 text-sm leading-6 text-zinc-600">
-              İhtiyacını anlatan bir proje oluştur. Uygunluk
-              durumuna göre bu uzman sana teklif verebilir.
-            </p>
-
-            <button
-              type="button"
-              onClick={() =>
-                router.push(
-                  `/jobs/new?provider_id=${encodeURIComponent(profile.user_id)}`,
-                )
-              }
-              className="mt-4 w-full rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800 sm:w-auto"
-            >
-              Bu Uzman İçin Proje Oluştur
-            </button>
-          </section>
-        ) : null}
+                  Bu Uzman İçin Proje Oluştur
+                </button>
+              </section>
+            ) : null
+          }
+        />
       </div>
     </main>
   );
 }
+

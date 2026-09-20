@@ -1,8 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import {
+  ConversationProjectContext,
+  loadConversationProjectJobs,
+  conversationJobHref,
+  type ConversationJob,
+} from "@/components/ConversationProjectContext";
 
 type ChatMessage = {
   id: number;
@@ -15,6 +21,7 @@ type ChatMessage = {
 export default function ConversationPage() {
   const supabase = createClient();
   const params = useParams();
+  const router = useRouter();
 
   const conversationId =
     typeof params.conversationId === "string"
@@ -28,6 +35,9 @@ export default function ConversationPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [hasAccess, setHasAccess] = useState<boolean | null>(null);
+  const [conversationJobs, setConversationJobs] = useState<
+    ConversationJob[]
+  >([]);
 
   useEffect(() => {
     loadPage();
@@ -37,6 +47,7 @@ export default function ConversationPage() {
     setLoading(true);
     setError("");
     setHasAccess(null);
+    setConversationJobs([]);
 
     if (!conversationId) {
       setError("Sohbet bulunamadı.");
@@ -79,7 +90,34 @@ export default function ConversationPage() {
 
     setHasAccess(true);
 
-    await loadMessages();
+    const { data: conversationList } = await supabase.rpc(
+      "get_my_conversations",
+    );
+    const conversationPreview = Array.isArray(conversationList)
+      ? conversationList.find(
+          (row) =>
+            Number(
+              (row as { conversation_id?: unknown }).conversation_id,
+            ) === Number(conversationId),
+        )
+      : null;
+    const otherUserIdRaw = (
+      conversationPreview as { other_user_id?: unknown } | null
+    )?.other_user_id;
+    const otherUserId =
+      otherUserIdRaw == null ? null : String(otherUserIdRaw);
+
+    const [jobs] = await Promise.all([
+      loadConversationProjectJobs(
+        supabase,
+        Number(conversationId),
+        user.id,
+        otherUserId,
+      ),
+      loadMessages(),
+    ]);
+
+    setConversationJobs(jobs);
 
     setLoading(false);
   }
@@ -206,6 +244,17 @@ export default function ConversationPage() {
       ) : null}
 
       <div className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white">
+        {currentUserId ? (
+          <ConversationProjectContext
+            key={conversationId}
+            jobs={conversationJobs}
+            currentUserId={currentUserId}
+            onViewJob={(jobId) => {
+              router.push(conversationJobHref(conversationJobs, jobId));
+            }}
+          />
+        ) : null}
+
         <div className="flex-1 space-y-4 overflow-y-auto p-5">
           {messages.length === 0 ? (
             <p className="text-sm text-zinc-500">

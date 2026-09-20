@@ -105,6 +105,54 @@ function isUuid(value: string) {
   );
 }
 
+function parseJobBudget(raw: string): number | null {
+  const trimmed = raw
+    .trim()
+    .replace(/\s/g, "")
+    .replace(/₺/g, "")
+    .replace(/TL/gi, "");
+
+  if (!trimmed) {
+    return null;
+  }
+
+  const lastComma = trimmed.lastIndexOf(",");
+  const lastDot = trimmed.lastIndexOf(".");
+
+  let normalized = trimmed;
+
+  if (lastComma !== -1 && lastDot !== -1) {
+    if (lastComma > lastDot) {
+      normalized = trimmed.replace(/\./g, "").replace(",", ".");
+    } else {
+      normalized = trimmed.replace(/,/g, "");
+    }
+  } else if (lastComma !== -1) {
+    const fraction = trimmed.slice(lastComma + 1);
+
+    if (fraction.length === 3) {
+      normalized = trimmed.replace(/,/g, "");
+    } else {
+      normalized = trimmed.replace(",", ".");
+    }
+  } else if (lastDot !== -1) {
+    const fraction = trimmed.slice(lastDot + 1);
+    const dotCount = (trimmed.match(/\./g) ?? []).length;
+
+    if (dotCount > 1 || fraction.length === 3) {
+      normalized = trimmed.replace(/\./g, "");
+    }
+  }
+
+  if (!/^-?\d+(\.\d+)?$/.test(normalized)) {
+    return null;
+  }
+
+  const parsed = Number(normalized);
+
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export default function NewJobPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -133,6 +181,9 @@ export default function NewJobPage() {
 
   const [targetProviderMissing, setTargetProviderMissing] =
     useState(false);
+
+  const [targetProviderServices, setTargetProviderServices] =
+    useState<Array<{ id: number; name: string }>>([]);
 
   const availableServices = services.filter(
     (service) => service.category_id === Number(categoryId),
@@ -168,17 +219,15 @@ export default function NewJobPage() {
       ]);
 
       if (categoriesResult.error) {
-        setError(
-          `Kategoriler yüklenemedi: ${categoriesResult.error.message}`,
-        );
+        console.error(categoriesResult.error);
+        setError("Bir hata oluştu. Lütfen tekrar deneyin.");
         setLoading(false);
         return;
       }
 
       if (servicesResult.error) {
-        setError(
-          `Hizmetler yüklenemedi: ${servicesResult.error.message}`,
-        );
+        console.error(servicesResult.error);
+        setError("Bir hata oluştu. Lütfen tekrar deneyin.");
         setLoading(false);
         return;
       }
@@ -194,26 +243,37 @@ export default function NewJobPage() {
       if (!providerIdParam) {
         setTargetProviderId(null);
         setTargetProviderName(null);
+        setTargetProviderServices([]);
         setTargetProviderMissing(false);
       } else if (!isUuid(providerIdParam)) {
         setTargetProviderId(null);
         setTargetProviderName(null);
+        setTargetProviderServices([]);
         setTargetProviderMissing(true);
         setError("Seçilen uzman bulunamadı.");
       } else {
         setTargetProviderId(providerIdParam);
         setTargetProviderMissing(false);
 
-        const { data: profileData, error: providerLookupError } =
-          await supabase.rpc("discover_providers");
+        const catalogServices = servicesResult.data ?? [];
+        const allowedCategoryIds = new Set(
+          (categoriesResult.data ?? []).map((category) => category.id),
+        );
 
-        if (providerLookupError) {
+        const [providerLookup, providerServicesLookup] =
+          await Promise.all([
+            supabase.rpc("discover_providers"),
+            supabase.rpc("discover_provider_services"),
+          ]);
+
+        if (providerLookup.error) {
           console.error(
             "Target provider lookup error:",
-            providerLookupError,
+            providerLookup.error,
           );
           setTargetProviderName("İsimsiz Uzman");
         } else {
+          const profileData = providerLookup.data;
           const profiles = (
             Array.isArray(profileData)
               ? profileData
@@ -235,6 +295,64 @@ export default function NewJobPage() {
             matchedProvider?.full_name?.trim() ||
               "İsimsiz Uzman",
           );
+        }
+
+        if (providerServicesLookup.error) {
+          console.error(
+            "Target provider services lookup error:",
+            providerServicesLookup.error,
+          );
+          setTargetProviderServices([]);
+        } else {
+          const serviceData = providerServicesLookup.data;
+          const serviceRows = (
+            Array.isArray(serviceData)
+              ? serviceData
+              : serviceData
+                ? [serviceData]
+                : []
+          ) as Array<{
+            provider_id?: string;
+            service_id?: number;
+            service_name?: string | null;
+          }>;
+
+          const providerServices = serviceRows
+            .filter(
+              (row) =>
+                String(row.provider_id ?? "").toLowerCase() ===
+                providerIdParam.toLowerCase(),
+            )
+            .map((row) => ({
+              id: Number(row.service_id),
+              name: row.service_name?.trim() || "Hizmet",
+            }))
+            .filter((row) => Number.isFinite(row.id) && row.id > 0);
+
+          setTargetProviderServices(providerServices);
+
+          const firstMatchingService = providerServices.find((item) => {
+            const catalogService = catalogServices.find(
+              (service) => Number(service.id) === item.id,
+            );
+
+            return (
+              catalogService !== undefined &&
+              allowedCategoryIds.has(catalogService.category_id)
+            );
+          });
+
+          if (firstMatchingService) {
+            const catalogService = catalogServices.find(
+              (service) =>
+                Number(service.id) === firstMatchingService.id,
+            );
+
+            if (catalogService) {
+              setCategoryId(String(catalogService.category_id));
+              setServiceId(String(catalogService.id));
+            }
+          }
         }
       }
 
@@ -284,7 +402,22 @@ export default function NewJobPage() {
       return;
     }
 
-    if (budget && Number(budget) < 0) {
+    const form = e.currentTarget as HTMLFormElement;
+    const budgetField = form.elements.namedItem("budget");
+    const budgetFromField =
+      budgetField instanceof HTMLInputElement
+        ? budgetField.value
+        : "";
+    const rawBudget =
+      budgetFromField.trim() !== "" ? budgetFromField : budget;
+    const parsedBudget = parseJobBudget(rawBudget);
+
+    if (rawBudget.trim() !== "" && parsedBudget === null) {
+      setError("Geçerli bir bütçe gir.");
+      return;
+    }
+
+    if (parsedBudget !== null && parsedBudget < 0) {
       setError("Bütçe 0'dan küçük olamaz.");
       return;
     }
@@ -317,7 +450,7 @@ export default function NewJobPage() {
       // Yeni matching sisteminin kullandığı hizmet.
       service_id: Number(serviceId),
 
-      budget: budget ? Number(budget) : null,
+      budget: parsedBudget,
 
       city: locationType === "remote" ? null : city || null,
 
@@ -327,14 +460,13 @@ export default function NewJobPage() {
     });
 
     if (error) {
-      setError(
-        `İlan oluşturulurken bir hata oluştu: ${error.message}`,
-      );
+      console.error(error);
+      setError("Bir hata oluştu. Lütfen tekrar deneyin.");
       setSaving(false);
       return;
     }
 
-    window.location.href = "/my-jobs";
+    window.location.href = "/my-jobs?published=1";
   }
 
   if (loading) {
@@ -358,19 +490,39 @@ export default function NewJobPage() {
           </h1>
 
           <p className="mt-2 text-sm leading-6 text-zinc-600">
-            Yapılmasını istediğin işi anlat. Hizmetine ve çalışma
-            koşullarına uygun profesyoneller ilanını görebilecek.
+            Yapılmasını istediğin işi anlat. Kimlerin göreceğini
+            hizmet, çalışma şekli ve (yerinde/hibrit) şehir belirler.
           </p>
         </div>
 
         {targetProviderName ? (
           <div className="mt-6 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
             <p className="text-sm text-zinc-500">
-              Bu uzman için proje oluşturuyorsun
+              Bu uzmana bildirim gider; uyan diğer uzmanlar da
+              projeyi görebilir. Proje yine teklif sürecinden ilerler.
             </p>
             <p className="mt-1 text-sm font-medium text-zinc-900">
               {targetProviderName}
             </p>
+
+            {targetProviderServices.length > 0 ? (
+              <div className="mt-3">
+                <p className="text-xs font-medium text-zinc-500">
+                  Bu uzmanın hizmetleri
+                </p>
+
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {targetProviderServices.map((service) => (
+                    <span
+                      key={service.id}
+                      className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-700"
+                    >
+                      {service.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -491,8 +643,10 @@ export default function NewJobPage() {
             <div className="mt-2 flex items-center rounded-lg border border-zinc-300 bg-white">
               <input
                 id="budget"
-                type="number"
-                min="0"
+                name="budget"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
                 value={budget}
                 onChange={(e) => setBudget(e.target.value)}
                 placeholder="Örn. 10000"

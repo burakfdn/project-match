@@ -21,6 +21,8 @@ type ProviderCard = {
     categoryName: string;
   }[];
   workSampleCount: number;
+  reviewAverage: string | null;
+  reviewCount: number;
 };
 
 type ProfileRow = {
@@ -105,10 +107,7 @@ export default function ProvidersPage() {
         "discover_providers error:",
         profilesResult.error,
       );
-      setError(
-        profilesResult.error.message ||
-          "Uzman listesi yüklenirken bir hata oluştu.",
-      );
+      setError("Bir hata oluştu. Lütfen tekrar deneyin.");
       setProviders([]);
       setLoading(false);
       return;
@@ -119,10 +118,7 @@ export default function ProvidersPage() {
         "discover_provider_services error:",
         servicesResult.error,
       );
-      setError(
-        servicesResult.error.message ||
-          "Uzman hizmetleri yüklenirken bir hata oluştu.",
-      );
+      setError("Bir hata oluştu. Lütfen tekrar deneyin.");
       setProviders([]);
       setLoading(false);
       return;
@@ -134,12 +130,19 @@ export default function ProvidersPage() {
       .filter((id) => id && id !== viewerId);
 
     const workCountByProvider: Record<string, number> = {};
+    const ratingsByProvider: Record<string, number[]> = {};
 
     if (candidateIds.length > 0) {
-      const workSamplesResult = await supabase
-        .from("provider_work_samples")
-        .select("id, provider_id")
-        .in("provider_id", candidateIds);
+      const [workSamplesResult, reviewsResult] = await Promise.all([
+        supabase
+          .from("provider_work_samples")
+          .select("id, provider_id")
+          .in("provider_id", candidateIds),
+        supabase
+          .from("reviews")
+          .select("provider_id, rating")
+          .in("provider_id", candidateIds),
+      ]);
 
       if (workSamplesResult.error) {
         console.error(
@@ -151,6 +154,25 @@ export default function ProvidersPage() {
           const providerId = sample.provider_id as string;
           workCountByProvider[providerId] =
             (workCountByProvider[providerId] ?? 0) + 1;
+        }
+      }
+
+      if (reviewsResult.error) {
+        console.error("Provider reviews error:", reviewsResult.error);
+      } else {
+        for (const row of reviewsResult.data ?? []) {
+          const providerId = row.provider_id as string;
+          const rating = Number(row.rating);
+
+          if (!providerId || !Number.isFinite(rating)) {
+            continue;
+          }
+
+          if (!ratingsByProvider[providerId]) {
+            ratingsByProvider[providerId] = [];
+          }
+
+          ratingsByProvider[providerId].push(rating);
         }
       }
     }
@@ -179,6 +201,19 @@ export default function ProvidersPage() {
           return null;
         }
 
+        const ratings = ratingsByProvider[id] ?? [];
+        const reviewCount = ratings.length;
+        const reviewAverage =
+          reviewCount === 0
+            ? null
+            : (
+                Math.round(
+                  (ratings.reduce((sum, rating) => sum + rating, 0) /
+                    reviewCount) *
+                    10,
+                ) / 10
+              ).toFixed(1);
+
         return {
           id,
           fullName: row.full_name?.trim() || "İsimsiz Uzman",
@@ -188,6 +223,8 @@ export default function ProvidersPage() {
           canWorkOnSite: Boolean(row.can_work_on_site),
           services: servicesByProvider[id] ?? [],
           workSampleCount: workCountByProvider[id] ?? 0,
+          reviewAverage,
+          reviewCount,
         };
       })
       .filter((item): item is ProviderCard => item !== null);
@@ -346,14 +383,23 @@ export default function ProvidersPage() {
         </h1>
 
         <p className="mt-2 text-zinc-500">
-          Hizmet verebilecek uzmanları keşfet, profillerini incele
-          ve mevcut ilanların üzerinden teklif al.
+          İhtiyacın olan hizmeti sunan uzmanları keşfet. Profillerini
+          inceleyip doğrudan proje oluşturabilirsin.
         </p>
       </div>
 
       {error && (
-        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <p className="text-sm text-red-700">{error}</p>
+          <button
+            type="button"
+            onClick={() => {
+              void loadProviders();
+            }}
+            className="text-sm font-medium text-red-800 underline-offset-2 hover:underline"
+          >
+            Tekrar dene
+          </button>
         </div>
       )}
 
@@ -521,6 +567,12 @@ export default function ProvidersPage() {
                     {provider.experienceYears} yıl deneyim
                     {" · "}
                     {getWorkLabel(provider)}
+                  </p>
+
+                  <p className="mt-1 text-sm text-zinc-500">
+                    {provider.reviewCount > 0 && provider.reviewAverage
+                      ? `★ ${provider.reviewAverage} · ${provider.reviewCount} değerlendirme`
+                      : "Henüz değerlendirme yok"}
                   </p>
 
                   {provider.services.length > 0 && (
