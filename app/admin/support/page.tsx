@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -33,9 +33,15 @@ type AdminSupportTicket = {
   job_title: string | null;
   job_public_id: string | null;
   is_unread?: boolean;
+  assigned_admin_id?: string | null;
 };
 
-const PAGE_SIZE = 50;
+type SupportAdmin = {
+  id: string;
+  full_name: string | null;
+};
+
+const PAGE_SIZE = 100;
 
 const CATEGORY_LABELS: Record<TicketCategory, string> = {
   job: "İş",
@@ -56,9 +62,9 @@ const PRIORITY_LABELS: Record<TicketPriority, string> = {
 
 const STATUS_LABELS: Record<TicketStatus, string> = {
   open: "Açık",
-  in_progress: "İnceleniyor",
+  in_progress: "İşlemde",
   resolved: "Çözüldü",
-  closed: "Kapatıldı",
+  closed: "Kapalı",
 };
 
 function formatDateTime(value: string) {
@@ -69,6 +75,10 @@ function formatDateTime(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function normalizeSearch(value: string) {
+  return value.trim().toLocaleLowerCase("tr-TR");
 }
 
 function statusClass(status: TicketStatus) {
@@ -86,19 +96,35 @@ function statusClass(status: TicketStatus) {
   }
 }
 
+function priorityClass(priority: TicketPriority) {
+  switch (priority) {
+    case "low":
+      return "bg-zinc-100 text-zinc-500";
+    case "normal":
+      return "bg-zinc-100 text-zinc-600";
+    case "high":
+      return "bg-amber-50 text-amber-800";
+    case "urgent":
+      return "bg-red-50 text-red-700";
+    default:
+      return "bg-zinc-100 text-zinc-600";
+  }
+}
+
 export default function AdminSupportPage() {
   const supabase = createClient();
   const router = useRouter();
 
   const [tickets, setTickets] = useState<AdminSupportTicket[]>([]);
+  const [admins, setAdmins] = useState<SupportAdmin[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [offset, setOffset] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
 
+  const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [priority, setPriority] = useState("");
-  const [category, setCategory] = useState("");
+  const [assigned, setAssigned] = useState("");
+  const [unread, setUnread] = useState("");
 
   useEffect(() => {
     checkAccessAndLoad();
@@ -126,45 +152,131 @@ export default function AdminSupportPage() {
       return;
     }
 
-    await loadTickets(0);
+    await loadTickets();
   }
 
-  async function loadTickets(nextOffset: number) {
+  async function loadTickets() {
     setLoading(true);
     setError("");
 
-    const { data, error: listError } = await supabase.rpc(
-      "admin_list_support_tickets",
-      {
-        p_limit: PAGE_SIZE,
-        p_offset: nextOffset,
-        p_status: status || null,
-        p_priority: priority || null,
-        p_category: category || null,
-      },
-    );
+    const rows: AdminSupportTicket[] = [];
+    let nextOffset = 0;
 
-    if (listError) {
-      console.error("Admin support list error:", listError);
-      setError(
-        listError.message ||
-          "Destek talepleri yüklenirken bir hata oluştu.",
+    while (true) {
+      const { data, error: listError } = await supabase.rpc(
+        "admin_list_support_tickets",
+        {
+          p_limit: PAGE_SIZE,
+          p_offset: nextOffset,
+          p_status: null,
+          p_priority: null,
+          p_category: null,
+        },
       );
-      setLoading(false);
-      return;
+
+      if (listError) {
+        console.error("Admin support list error:", listError);
+        setError(
+          listError.message ||
+            "Destek talepleri yüklenirken bir hata oluştu.",
+        );
+        setTickets([]);
+        setLoading(false);
+        return;
+      }
+
+      const batch = (data ?? []) as AdminSupportTicket[];
+      rows.push(...batch);
+
+      if (batch.length < PAGE_SIZE) {
+        break;
+      }
+
+      nextOffset += PAGE_SIZE;
     }
 
-    const rows = (data ?? []) as AdminSupportTicket[];
-    setTickets(rows);
-    setOffset(nextOffset);
-    setHasMore(rows.length === PAGE_SIZE);
+    const [{ data: adminData }, { data: assignmentData }] = await Promise.all([
+      supabase.rpc("admin_list_support_admins"),
+      supabase.from("admin_support_tickets").select("id, assigned_admin_id"),
+    ]);
+
+    setAdmins((adminData ?? []) as SupportAdmin[]);
+
+    const assignedById = new Map<number, string | null>();
+
+    for (const row of assignmentData ?? []) {
+      assignedById.set(Number(row.id), row.assigned_admin_id ?? null);
+    }
+
+    setTickets(
+      rows.map((ticket) => ({
+        ...ticket,
+        assigned_admin_id: assignedById.has(ticket.id)
+          ? assignedById.get(ticket.id)
+          : ticket.assigned_admin_id ?? null,
+      })),
+    );
     setLoading(false);
   }
 
-  function handleFilterSubmit(event: FormEvent) {
-    event.preventDefault();
-    void loadTickets(0);
+  const hasActiveFilters =
+    Boolean(search.trim()) ||
+    Boolean(status) ||
+    Boolean(priority) ||
+    Boolean(assigned) ||
+    Boolean(unread);
+
+  const filteredTickets = useMemo(() => {
+    const query = normalizeSearch(search);
+
+    return tickets.filter((ticket) => {
+      if (status && ticket.status !== status) {
+        return false;
+      }
+
+      if (priority && ticket.priority !== priority) {
+        return false;
+      }
+
+      if (assigned === "unassigned") {
+        if (ticket.assigned_admin_id) {
+          return false;
+        }
+      } else if (assigned && ticket.assigned_admin_id !== assigned) {
+        return false;
+      }
+
+      if (unread === "unread" && !ticket.is_unread) {
+        return false;
+      }
+
+      if (!query) {
+        return true;
+      }
+
+      const haystack = [
+        ticket.subject,
+        ticket.user_name,
+        ticket.job_title,
+      ]
+        .filter(Boolean)
+        .map((value) => normalizeSearch(String(value)))
+        .join(" ");
+
+      return haystack.includes(query);
+    });
+  }, [assigned, priority, search, status, tickets, unread]);
+
+  function clearFilters() {
+    setSearch("");
+    setStatus("");
+    setPriority("");
+    setAssigned("");
+    setUnread("");
   }
+
+  const selectClassName =
+    "min-w-[8.5rem] flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 sm:flex-none";
 
   return (
     <main className="min-h-screen bg-white">
@@ -220,73 +332,77 @@ export default function AdminSupportPage() {
           </p>
         </div>
 
-        <form
-          onSubmit={handleFilterSubmit}
-          className="mb-8 grid gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-4 sm:grid-cols-2 lg:grid-cols-4"
-        >
-          <label className="text-sm">
-            <span className="mb-1 block text-xs font-medium text-zinc-500">
-              Durum
-            </span>
-            <select
-              value={status}
-              onChange={(event) => setStatus(event.target.value)}
-              className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900"
-            >
-              <option value="">Tümü</option>
-              <option value="open">Açık</option>
-              <option value="in_progress">İnceleniyor</option>
-              <option value="resolved">Çözüldü</option>
-              <option value="closed">Kapatıldı</option>
-            </select>
+        <div className="mb-6">
+          <label className="block">
+            <span className="sr-only">Ara</span>
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Konu, kullanıcı veya iş ara"
+              className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-900"
+            />
           </label>
 
-          <label className="text-sm">
-            <span className="mb-1 block text-xs font-medium text-zinc-500">
-              Öncelik
-            </span>
+          <div className="mt-3 flex flex-wrap gap-2">
             <select
+              aria-label="Durum"
+              value={status}
+              onChange={(event) => setStatus(event.target.value)}
+              className={selectClassName}
+            >
+              <option value="">Durum: Tümü</option>
+              <option value="open">Açık</option>
+              <option value="in_progress">İşlemde</option>
+              <option value="resolved">Çözüldü</option>
+              <option value="closed">Kapalı</option>
+            </select>
+
+            <select
+              aria-label="Öncelik"
               value={priority}
               onChange={(event) => setPriority(event.target.value)}
-              className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900"
+              className={selectClassName}
             >
-              <option value="">Tümü</option>
+              <option value="">Öncelik: Tümü</option>
               <option value="low">Düşük</option>
               <option value="normal">Normal</option>
               <option value="high">Yüksek</option>
               <option value="urgent">Acil</option>
             </select>
-          </label>
 
-          <label className="text-sm">
-            <span className="mb-1 block text-xs font-medium text-zinc-500">
-              Kategori
-            </span>
             <select
-              value={category}
-              onChange={(event) => setCategory(event.target.value)}
-              className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900"
+              aria-label="Atanan"
+              value={assigned}
+              onChange={(event) => setAssigned(event.target.value)}
+              className={selectClassName}
             >
-              <option value="">Tümü</option>
-              <option value="job">İş</option>
-              <option value="offer">Teklif</option>
-              <option value="messaging">Mesajlaşma</option>
-              <option value="account">Hesap</option>
-              <option value="payment">Ödeme</option>
-              <option value="technical">Teknik</option>
-              <option value="other">Diğer</option>
+              <option value="">Atanan: Tümü</option>
+              <option value="unassigned">Atanmamış</option>
+              {admins.map((admin) => (
+                <option key={admin.id} value={admin.id}>
+                  {admin.full_name || "İsimsiz admin"}
+                </option>
+              ))}
             </select>
-          </label>
 
-          <div className="flex items-end">
-            <button
-              type="submit"
-              className="w-full rounded-lg bg-zinc-950 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+            <select
+              aria-label="Okunma"
+              value={unread}
+              onChange={(event) => setUnread(event.target.value)}
+              className={selectClassName}
             >
-              Filtrele
-            </button>
+              <option value="">Okunma: Tümü</option>
+              <option value="unread">Okunmamış</option>
+            </select>
           </div>
-        </form>
+
+          <p className="mt-3 text-xs text-zinc-400">
+            {loading
+              ? "Talepler yükleniyor..."
+              : `${filteredTickets.length} ticket gösteriliyor`}
+          </p>
+        </div>
 
         {error ? (
           <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -296,11 +412,26 @@ export default function AdminSupportPage() {
 
         {loading ? (
           <p className="text-sm text-zinc-500">Talepler yükleniyor...</p>
-        ) : tickets.length === 0 ? (
-          <p className="text-sm text-zinc-500">Kayıt bulunamadı.</p>
+        ) : filteredTickets.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 px-5 py-10 text-center">
+            <p className="text-sm text-zinc-600">
+              {hasActiveFilters
+                ? "Filtrelere uyan destek talebi bulunamadı."
+                : "Kayıt bulunamadı."}
+            </p>
+            {hasActiveFilters ? (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="mt-4 text-sm font-medium text-zinc-700 hover:text-zinc-950"
+              >
+                Filtreleri temizle
+              </button>
+            ) : null}
+          </div>
         ) : (
           <div className="space-y-3">
-            {tickets.map((ticket) => (
+            {filteredTickets.map((ticket) => (
               <Link
                 key={ticket.id}
                 href={`/admin/support/${ticket.id}`}
@@ -327,17 +458,24 @@ export default function AdminSupportPage() {
                       {ticket.user_name || "İsimsiz kullanıcı"}
                       {" · "}
                       {CATEGORY_LABELS[ticket.category] ?? ticket.category}
-                      {" · "}
-                      {PRIORITY_LABELS[ticket.priority] ?? ticket.priority}
                     </p>
                   </div>
-                  <span
-                    className={`inline-flex w-fit rounded-full px-2.5 py-1 text-xs font-medium ${statusClass(
-                      ticket.status,
-                    )}`}
-                  >
-                    {STATUS_LABELS[ticket.status] ?? ticket.status}
-                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    <span
+                      className={`inline-flex w-fit rounded-full px-2.5 py-1 text-xs font-medium ${priorityClass(
+                        ticket.priority,
+                      )}`}
+                    >
+                      {PRIORITY_LABELS[ticket.priority] ?? ticket.priority}
+                    </span>
+                    <span
+                      className={`inline-flex w-fit rounded-full px-2.5 py-1 text-xs font-medium ${statusClass(
+                        ticket.status,
+                      )}`}
+                    >
+                      {STATUS_LABELS[ticket.status] ?? ticket.status}
+                    </span>
+                  </div>
                 </div>
                 <p className="mt-3 text-xs text-zinc-400">
                   {formatDateTime(ticket.created_at)}
@@ -347,28 +485,6 @@ export default function AdminSupportPage() {
             ))}
           </div>
         )}
-
-        <div className="mt-8 flex items-center justify-between">
-          <button
-            type="button"
-            disabled={loading || offset === 0}
-            onClick={() => void loadTickets(Math.max(offset - PAGE_SIZE, 0))}
-            className="rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Önceki
-          </button>
-          <p className="text-xs text-zinc-400">
-            {offset + 1}–{offset + tickets.length}
-          </p>
-          <button
-            type="button"
-            disabled={loading || !hasMore}
-            onClick={() => void loadTickets(offset + PAGE_SIZE)}
-            className="rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Sonraki
-          </button>
-        </div>
       </section>
     </main>
   );

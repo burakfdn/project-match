@@ -75,9 +75,9 @@ const PRIORITY_LABELS: Record<TicketPriority, string> = {
 
 const STATUS_LABELS: Record<TicketStatus, string> = {
   open: "Açık",
-  in_progress: "İnceleniyor",
+  in_progress: "İşlemde",
   resolved: "Çözüldü",
-  closed: "Kapatıldı",
+  closed: "Kapalı",
 };
 
 function formatDateTime(value: string) {
