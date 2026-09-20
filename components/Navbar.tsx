@@ -115,6 +115,7 @@ export default function Navbar() {
   useEffect(() => {
     function handleSupportUnreadRefresh() {
       void loadSupportUnreadCount();
+      void loadNotificationUnreadCount();
     }
 
     window.addEventListener(
@@ -285,12 +286,7 @@ export default function Navbar() {
       applySavedMode(nextPermissions);
     }
 
-    const { data } = await supabase
-      .from("notifications")
-      .select("id")
-      .is("read_at", null);
-
-    setUnreadCount((data ?? []).length);
+    await loadNotificationUnreadCount();
 
     if (!activePreviewUser && nextPermissions?.is_admin) {
       await loadSupportUnreadCount();
@@ -299,6 +295,16 @@ export default function Navbar() {
     }
 
     setReady(true);
+  }
+
+  async function loadNotificationUnreadCount() {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("notifications")
+      .select("id")
+      .is("read_at", null);
+
+    setUnreadCount((data ?? []).length);
   }
 
   async function loadSupportUnreadCount() {
