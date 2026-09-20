@@ -41,7 +41,19 @@ type ServiceRow = {
 type PerformanceData = {
   categories: CategoryRow[];
   services: ServiceRow[];
+  daily: TrendPoint[];
+  weekly: TrendPoint[];
+  monthly: TrendPoint[];
+  yearly: TrendPoint[];
 };
+
+type TrendPoint = {
+  period: string;
+  job_count: number;
+  offer_count: number;
+};
+
+type TrendRange = "daily" | "weekly" | "monthly" | "yearly";
 
 type ServiceSortKey =
   | "service_name"
@@ -74,6 +86,138 @@ function parseRpcJson<T>(data: unknown) {
   return data as T;
 }
 
+function formatTrendLabel(period: string, range: TrendRange) {
+  if (range === "yearly") {
+    return period;
+  }
+
+  if (range === "monthly") {
+    const [year, month] = period.split("-");
+    if (!year || !month) {
+      return period;
+    }
+
+    return new Intl.DateTimeFormat("tr-TR", {
+      month: "short",
+      year: "numeric",
+    }).format(new Date(Number(year), Number(month) - 1, 1));
+  }
+
+  const date = new Date(`${period}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    return period;
+  }
+
+  return new Intl.DateTimeFormat("tr-TR", {
+    day: "numeric",
+    month: "short",
+  }).format(date);
+}
+
+function TrendChart({
+  points,
+  range,
+}: {
+  points: TrendPoint[];
+  range: TrendRange;
+}) {
+  const width = 800;
+  const height = 240;
+  const pad = { top: 16, right: 16, bottom: 36, left: 36 };
+  const innerWidth = width - pad.left - pad.right;
+  const innerHeight = height - pad.top - pad.bottom;
+  const maxValue = Math.max(
+    1,
+    ...points.map((point) =>
+      Math.max(toNumber(point.job_count), toNumber(point.offer_count)),
+    ),
+  );
+
+  function xFor(index: number) {
+    if (points.length <= 1) {
+      return pad.left + innerWidth / 2;
+    }
+
+    return pad.left + (index / (points.length - 1)) * innerWidth;
+  }
+
+  function yFor(value: number) {
+    return pad.top + innerHeight - (toNumber(value) / maxValue) * innerHeight;
+  }
+
+  function linePath(key: "job_count" | "offer_count") {
+    return points
+      .map((point, index) => {
+        const command = index === 0 ? "M" : "L";
+        return `${command}${xFor(index)} ${yFor(toNumber(point[key]))}`;
+      })
+      .join(" ");
+  }
+
+  const labelStep = Math.max(1, Math.ceil(points.length / 6));
+
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="h-56 w-full sm:h-64"
+      role="img"
+      aria-label="Aktivite trendi"
+    >
+      <line
+        x1={pad.left}
+        y1={pad.top + innerHeight}
+        x2={width - pad.right}
+        y2={pad.top + innerHeight}
+        className="stroke-zinc-200"
+        strokeWidth="1"
+      />
+      <path
+        d={linePath("job_count")}
+        fill="none"
+        className="stroke-zinc-900"
+        strokeWidth="2"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+      <path
+        d={linePath("offer_count")}
+        fill="none"
+        className="stroke-zinc-400"
+        strokeWidth="2"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+      {points.map((point, index) => (
+        <g key={`${point.period}-${index}`}>
+          <circle
+            cx={xFor(index)}
+            cy={yFor(toNumber(point.job_count))}
+            r="2.5"
+            className="fill-zinc-900"
+          />
+          <circle
+            cx={xFor(index)}
+            cy={yFor(toNumber(point.offer_count))}
+            r="2.5"
+            className="fill-zinc-400"
+          />
+          {index % labelStep === 0 || index === points.length - 1 ? (
+            <text
+              x={xFor(index)}
+              y={height - 12}
+              textAnchor="middle"
+              className="fill-zinc-400 text-[10px]"
+            >
+              {formatTrendLabel(point.period, range)}
+            </text>
+          ) : null}
+        </g>
+      ))}
+    </svg>
+  );
+}
+
 function MetricCard({
   label,
   value,
@@ -103,6 +247,7 @@ export default function AdminAnalyticsPage() {
     useState<ServiceSortKey>("job_count");
   const [serviceSortDir, setServiceSortDir] = useState<"asc" | "desc">("desc");
   const [showAllServices, setShowAllServices] = useState(false);
+  const [trendRange, setTrendRange] = useState<TrendRange>("daily");
 
   useEffect(() => {
     loadAnalytics();
@@ -142,6 +287,10 @@ export default function AdminAnalyticsPage() {
       setPerformance({
         categories: Array.isArray(parsed?.categories) ? parsed.categories : [],
         services: Array.isArray(parsed?.services) ? parsed.services : [],
+        daily: Array.isArray(parsed?.daily) ? parsed.daily : [],
+        weekly: Array.isArray(parsed?.weekly) ? parsed.weekly : [],
+        monthly: Array.isArray(parsed?.monthly) ? parsed.monthly : [],
+        yearly: Array.isArray(parsed?.yearly) ? parsed.yearly : [],
       });
     }
 
@@ -211,6 +360,36 @@ export default function AdminAnalyticsPage() {
   const visibleServices = showAllServices
     ? sortedServices
     : sortedServices.slice(0, 10);
+
+  const trendPoints = useMemo(() => {
+    if (!performance) {
+      return [];
+    }
+
+    if (trendRange === "weekly") {
+      return performance.weekly;
+    }
+
+    if (trendRange === "monthly") {
+      return performance.monthly;
+    }
+
+    if (trendRange === "yearly") {
+      return performance.yearly;
+    }
+
+    return performance.daily;
+  }, [performance, trendRange]);
+
+  const trendTotals = useMemo(() => {
+    return trendPoints.reduce(
+      (totals, point) => ({
+        jobs: totals.jobs + toNumber(point.job_count),
+        offers: totals.offers + toNumber(point.offer_count),
+      }),
+      { jobs: 0, offers: 0 },
+    );
+  }, [trendPoints]);
 
   function toggleServiceSort(key: ServiceSortKey) {
     if (serviceSortKey === key) {
@@ -592,6 +771,77 @@ export default function AdminAnalyticsPage() {
                         : "Tüm hizmetleri göster"}
                     </button>
                   ) : null}
+                </section>
+
+                <section>
+                  <h2 className="text-lg font-semibold text-zinc-900">
+                    Aktivite Trendi
+                  </h2>
+                  <p className="mt-1 text-sm text-zinc-500">
+                    Seçilen aralıktaki iş ve teklif oluşumları.
+                  </p>
+
+                  <div className="mt-4 rounded-2xl border border-zinc-200 bg-white p-5">
+                    <div className="flex flex-wrap gap-2">
+                      {(
+                        [
+                          ["daily", "Günlük"],
+                          ["weekly", "Haftalık"],
+                          ["monthly", "Aylık"],
+                          ["yearly", "Yıllık"],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => setTrendRange(value)}
+                          className={`rounded-full px-3 py-1.5 text-xs font-medium ${
+                            trendRange === value
+                              ? "bg-zinc-950 text-white"
+                              : "bg-zinc-100 text-zinc-600"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-zinc-500">
+                      <span className="inline-flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-zinc-900" />
+                        İş / ilan
+                      </span>
+                      <span className="inline-flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-zinc-400" />
+                        Teklif
+                      </span>
+                    </div>
+
+                    {trendPoints.length === 0 ? (
+                      <p className="mt-6 text-sm text-zinc-500">
+                        Trend verisi bulunamadı.
+                      </p>
+                    ) : (
+                      <div className="mt-4">
+                        <TrendChart points={trendPoints} range={trendRange} />
+                      </div>
+                    )}
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-xl border border-zinc-100 bg-zinc-50 px-4 py-3">
+                        <p className="text-xs text-zinc-500">Toplam iş</p>
+                        <p className="mt-1 text-lg font-semibold text-zinc-900">
+                          {formatCount(trendTotals.jobs)}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-zinc-100 bg-zinc-50 px-4 py-3">
+                        <p className="text-xs text-zinc-500">Toplam teklif</p>
+                        <p className="mt-1 text-lg font-semibold text-zinc-900">
+                          {formatCount(trendTotals.offers)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                 </section>
               </>
             ) : null}
