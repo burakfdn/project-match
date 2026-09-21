@@ -124,6 +124,38 @@ function isImageUrl(url: string | null) {
   }
 }
 
+function normalizeSearchText(value: string) {
+  return value
+    .toLocaleLowerCase("tr")
+    .replaceAll("ı", "i")
+    .replaceAll("ğ", "g")
+    .replaceAll("ü", "u")
+    .replaceAll("ş", "s")
+    .replaceAll("ö", "o")
+    .replaceAll("ç", "c");
+}
+
+function matchesSearchQuery(provider: ProviderCard, query: string) {
+  const tokens = normalizeSearchText(query)
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (tokens.length === 0) {
+    return true;
+  }
+
+  const haystack = normalizeSearchText(
+    [
+      provider.fullName,
+      provider.bio ?? "",
+      ...provider.services.map((service) => service.name),
+      ...provider.services.map((service) => service.categoryName),
+    ].join(" "),
+  );
+
+  return tokens.every((token) => haystack.includes(token));
+}
+
 function excerpt(value: string | null, maxLength = 110) {
   const trimmed = value?.trim() ?? "";
 
@@ -160,14 +192,17 @@ export default function ProvidersPage() {
   const [cityFilter, setCityFilter] = useState("");
   const [workModeFilter, setWorkModeFilter] =
     useState<WorkModeFilter>("all");
+  const [queryFilter, setQueryFilter] = useState("");
   const [filtersReady, setFiltersReady] = useState(false);
 
   useEffect(() => {
     const serviceParam = searchParams.get("service")?.trim() ?? "";
     const categoryParam = searchParams.get("category")?.trim() ?? "";
+    const queryParam = searchParams.get("q") ?? "";
 
     setServiceFilter(serviceParam);
     setCategoryFilter(categoryParam);
+    setQueryFilter(queryParam);
     setFiltersReady(true);
   }, [searchParams]);
 
@@ -175,7 +210,11 @@ export default function ProvidersPage() {
     void loadProviders();
   }, []);
 
-  function syncFilterUrl(nextCategory: string, nextService: string) {
+  function syncFilterUrl(
+    nextCategory: string,
+    nextService: string,
+    nextSearch: string,
+  ) {
     const params = new URLSearchParams();
 
     if (nextCategory) {
@@ -186,10 +225,17 @@ export default function ProvidersPage() {
       params.set("service", nextService);
     }
 
+    const trimmedSearch = nextSearch.trim();
+
+    if (trimmedSearch) {
+      params.set("q", trimmedSearch);
+    }
+
     const nextQuery = params.toString();
     const currentQuery = new URLSearchParams();
     const currentCategory = searchParams.get("category")?.trim() ?? "";
     const currentService = searchParams.get("service")?.trim() ?? "";
+    const currentSearch = searchParams.get("q")?.trim() ?? "";
 
     if (currentCategory) {
       currentQuery.set("category", currentCategory);
@@ -197,6 +243,10 @@ export default function ProvidersPage() {
 
     if (currentService) {
       currentQuery.set("service", currentService);
+    }
+
+    if (currentSearch) {
+      currentQuery.set("q", currentSearch);
     }
 
     if (currentQuery.toString() === nextQuery) {
@@ -476,13 +526,18 @@ export default function ProvidersPage() {
     categoryFilter !== "" ||
     serviceFilter !== "" ||
     cityFilter !== "" ||
-    workModeFilter !== "all";
+    workModeFilter !== "all" ||
+    queryFilter.trim() !== "";
 
   const filteredProviders = useMemo(() => {
     const selectedCategoryId = asPositiveInt(categoryFilter);
     const selectedServiceId = asPositiveInt(serviceFilter);
 
     return providers.filter((provider) => {
+      if (!matchesSearchQuery(provider, queryFilter)) {
+        return false;
+      }
+
       if (selectedCategoryId) {
         const hasCategory = provider.services.some(
           (service) => Number(service.category_id) === selectedCategoryId,
@@ -545,6 +600,7 @@ export default function ProvidersPage() {
     serviceFilter,
     cityFilter,
     workModeFilter,
+    queryFilter,
   ]);
 
   function updateCategoryFilter(nextCategory: string) {
@@ -570,12 +626,17 @@ export default function ProvidersPage() {
 
     setCategoryFilter(nextCategory);
     setServiceFilter(nextService);
-    syncFilterUrl(nextCategory, nextService);
+    syncFilterUrl(nextCategory, nextService, queryFilter);
   }
 
   function updateServiceFilter(nextService: string) {
     setServiceFilter(nextService);
-    syncFilterUrl(categoryFilter, nextService);
+    syncFilterUrl(categoryFilter, nextService, queryFilter);
+  }
+
+  function updateQueryFilter(nextQuery: string) {
+    setQueryFilter(nextQuery);
+    syncFilterUrl(categoryFilter, serviceFilter, nextQuery);
   }
 
   function clearFilters() {
@@ -583,7 +644,8 @@ export default function ProvidersPage() {
     setServiceFilter("");
     setCityFilter("");
     setWorkModeFilter("all");
-    syncFilterUrl("", "");
+    setQueryFilter("");
+    syncFilterUrl("", "", "");
   }
 
   return (
@@ -619,6 +681,19 @@ export default function ProvidersPage() {
         ) : (
           <>
             <div className="mb-8 rounded-2xl border border-zinc-200 bg-white p-4 sm:p-5">
+              <label className="mb-4 flex flex-col gap-1.5 text-sm">
+                <span className="font-medium text-zinc-700">Ara</span>
+                <input
+                  type="search"
+                  value={queryFilter}
+                  onChange={(event) => {
+                    updateQueryFilter(event.target.value);
+                  }}
+                  placeholder="Uzman, hizmet veya anahtar kelime ara"
+                  className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-base text-zinc-900 outline-none focus:border-zinc-400 sm:py-2 sm:text-sm"
+                />
+              </label>
+
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <label className="flex flex-col gap-1.5 text-sm">
                   <span className="font-medium text-zinc-700">Kategori</span>
@@ -725,7 +800,9 @@ export default function ProvidersPage() {
             {filteredProviders.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-zinc-300 p-12 text-center">
                 <p className="text-sm text-zinc-500">
-                  Bu kriterlere uygun uzman bulunamadı.
+                  {queryFilter.trim()
+                    ? "Aramana uygun uzman bulunamadı."
+                    : "Bu kriterlere uygun uzman bulunamadı."}
                 </p>
                 {hasActiveFilters ? (
                   <button
