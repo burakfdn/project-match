@@ -13,6 +13,10 @@ export default function AccountPage() {
   const [error, setError] = useState("");
   const [customerEnabled, setCustomerEnabled] = useState(false);
   const [providerEnabled, setProviderEnabled] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [providerDiscoverable, setProviderDiscoverable] = useState(false);
+  const [savingDiscoverable, setSavingDiscoverable] = useState(false);
+  const [discoverableMessage, setDiscoverableMessage] = useState("");
   const [enabling, setEnabling] = useState<"customer" | "provider" | null>(
     null,
   );
@@ -42,7 +46,9 @@ export default function AccountPage() {
 
     const { data, error: profileError } = await supabase
       .from("profiles")
-      .select("customer_enabled, provider_enabled")
+      .select(
+        "customer_enabled, provider_enabled, is_admin, provider_discoverable",
+      )
       .eq("id", user.id)
       .single();
 
@@ -56,6 +62,8 @@ export default function AccountPage() {
 
     setCustomerEnabled(Boolean(data?.customer_enabled));
     setProviderEnabled(Boolean(data?.provider_enabled));
+    setIsAdmin(Boolean(data?.is_admin));
+    setProviderDiscoverable(Boolean(data?.provider_discoverable));
     setLoading(false);
   }
 
@@ -88,6 +96,33 @@ export default function AccountPage() {
 
     window.dispatchEvent(new Event(ACTIVE_MODE_CHANGE_EVENT));
     setEnabling(null);
+  }
+
+  async function saveDiscoverable(nextValue: boolean) {
+    if (preview || savingDiscoverable || !isAdmin || !providerEnabled) {
+      return;
+    }
+
+    setSavingDiscoverable(true);
+    setDiscoverableMessage("");
+    setError("");
+
+    const { error: rpcError } = await supabase.rpc(
+      "set_my_provider_discoverable",
+      { p_discoverable: nextValue },
+    );
+
+    if (rpcError) {
+      setError(
+        rpcError.message || "Görünürlük ayarı kaydedilirken bir hata oluştu.",
+      );
+      setSavingDiscoverable(false);
+      return;
+    }
+
+    setProviderDiscoverable(nextValue);
+    setDiscoverableMessage("Kaydedildi.");
+    setSavingDiscoverable(false);
   }
 
   return (
@@ -167,6 +202,48 @@ export default function AccountPage() {
             </div>
           </div>
         )}
+
+        {!loading && isAdmin && providerEnabled ? (
+          <div className="mt-10 rounded-2xl border border-zinc-200 bg-white px-4 py-5">
+            <h2 className="text-sm font-semibold text-zinc-900">
+              Uzmanlar arasında görünürlük
+            </h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              Uzmanlar Keşfet sayfasında profilinin görünmesini istediğinde bu
+              seçeneği açabilirsin.
+            </p>
+
+            <div className="mt-4 flex items-center justify-between gap-4">
+              <p className="text-sm font-medium text-zinc-700">
+                {providerDiscoverable ? "Açık" : "Kapalı"}
+              </p>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={providerDiscoverable}
+                disabled={preview || savingDiscoverable}
+                onClick={() => void saveDiscoverable(!providerDiscoverable)}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-0.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  providerDiscoverable ? "bg-zinc-900" : "bg-zinc-200"
+                }`}
+              >
+                <span
+                  className={`h-6 w-6 rounded-full bg-white shadow-sm transition-transform ${
+                    providerDiscoverable ? "translate-x-5" : "translate-x-0"
+                  }`}
+                />
+              </button>
+            </div>
+
+            {savingDiscoverable ? (
+              <p className="mt-3 text-xs text-zinc-500">Kaydediliyor...</p>
+            ) : discoverableMessage ? (
+              <p className="mt-3 text-xs text-emerald-700">
+                {discoverableMessage}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </section>
     </main>
   );
