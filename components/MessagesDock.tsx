@@ -910,9 +910,9 @@ export default function MessagesDock() {
   }
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-40">
+    <div className="pointer-events-none fixed inset-0 z-40 max-w-full">
       {open ? (
-        <div className="pointer-events-auto absolute inset-x-3 bottom-20 top-16 flex flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm sm:inset-auto sm:right-6 sm:bottom-20 sm:top-auto sm:h-[600px] sm:w-[400px]">
+        <div className="pointer-events-auto absolute inset-x-3 bottom-[4.75rem] top-auto flex h-[min(62vh,36rem)] max-h-[calc(100dvh-7.5rem)] flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm sm:inset-auto sm:right-6 sm:bottom-20 sm:top-auto sm:h-[600px] sm:max-h-none sm:w-[400px]">
           {selected ? (
             <>
               <div className="flex items-start gap-3 border-b border-zinc-100 px-4 py-3">
@@ -995,7 +995,7 @@ export default function MessagesDock() {
                                 }`}
                               >
                                 <div
-                                  className={`max-w-[80%] rounded-2xl px-3 py-2 ${
+                                  className={`max-w-[min(80%,18rem)] rounded-2xl px-3 py-2 sm:max-w-[80%] ${
                                     isOwn
                                       ? "bg-zinc-900 text-white"
                                       : "bg-zinc-100 text-zinc-900"
@@ -1061,7 +1061,7 @@ export default function MessagesDock() {
                     disabled={
                       sending || threadLoading || hasAccess !== true
                     }
-                    className="min-w-0 flex-1 resize-none rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 disabled:opacity-50"
+                    className="min-h-11 min-w-0 flex-1 resize-none rounded-xl border border-zinc-300 bg-white px-3 py-2.5 text-base text-zinc-900 outline-none focus:border-zinc-500 disabled:opacity-50 sm:min-h-0 sm:text-sm"
                   />
                   <button
                     type="button"
@@ -1069,7 +1069,7 @@ export default function MessagesDock() {
                     disabled={
                       sending || threadLoading || hasAccess !== true
                     }
-                    className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="min-h-11 shrink-0 rounded-xl bg-zinc-900 px-4 text-sm font-medium text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0 sm:py-2"
                   >
                     {sending ? "..." : "Gönder"}
                   </button>
@@ -1224,7 +1224,7 @@ export default function MessagesDock() {
       ) : null}
 
       {preview ? (
-        <div className="pointer-events-auto absolute bottom-4 left-4 right-28 max-w-[340px] sm:left-auto sm:right-40 sm:bottom-5 sm:w-[320px]">
+        <div className="pointer-events-auto absolute bottom-3 left-3 right-[5.75rem] sm:left-auto sm:right-40 sm:bottom-5 sm:w-[320px] sm:max-w-[340px]">
           <div className="relative rounded-2xl border border-zinc-200 bg-white shadow-sm">
             <button
               type="button"
@@ -1264,7 +1264,7 @@ export default function MessagesDock() {
             setOpen(true);
           }
         }}
-        className={`pointer-events-auto absolute right-4 bottom-4 inline-flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-full border px-4 py-2.5 text-sm font-medium shadow-sm transition-transform duration-200 sm:right-6 sm:bottom-5 ${
+        className={`pointer-events-auto absolute right-3 bottom-3 inline-flex h-11 max-w-[calc(100%-1.5rem)] items-center gap-1.5 rounded-full border px-3.5 text-sm font-medium shadow-sm transition-transform duration-200 sm:right-6 sm:bottom-5 sm:h-auto sm:gap-2 sm:px-4 sm:py-2.5 ${
           hasUnread
             ? "border-rose-300 bg-rose-50 text-rose-800 shadow-md"
             : open

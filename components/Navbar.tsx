@@ -39,6 +39,151 @@ type Notification = {
 const PUBLIC_PATHS = ["/login", "/signup", "/onboarding"];
 const DROPDOWN_LIMIT = 8;
 
+const CUSTOMER_DISCOVER_ITEMS = [
+  { href: "/providers", label: "Uzmanları Keşfet" },
+  { href: "/jobs", label: "İşleri Keşfet" },
+] as const;
+
+const PROVIDER_DISCOVER_ITEMS = [
+  { href: "/jobs", label: "İşleri Keşfet" },
+] as const;
+
+const CUSTOMER_MOBILE_NAV_ITEMS = [
+  { href: "/my-jobs", label: "İşlerim" },
+] as const;
+
+const PROVIDER_MOBILE_NAV_ITEMS = [
+  { href: "/my-offers", label: "Tekliflerim" },
+  { href: "/profile", label: "Profilim" },
+] as const;
+
+function isDiscoverHrefActive(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function ModeControl({
+  mode,
+  canSwitch,
+  onSwitch,
+  className,
+  compact = false,
+}: {
+  mode: ActiveMode;
+  canSwitch: boolean;
+  onSwitch: (nextMode: ActiveMode) => void;
+  className?: string;
+  compact?: boolean;
+}) {
+  const label = mode === "customer" ? "Proje Sahibi" : "Uzman";
+  const compactTone =
+    mode === "customer"
+      ? "border-violet-200 bg-violet-50 text-violet-800"
+      : "border-emerald-200 bg-emerald-50 text-emerald-800";
+
+  if (compact) {
+    const compactClassName = `inline-flex h-7 max-w-full items-center rounded-full border px-3 text-xs font-medium ${compactTone}`;
+
+    if (!canSwitch) {
+      return (
+        <div className={className}>
+          <div className={compactClassName} aria-label={label}>
+            {label}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className={className}>
+        <button
+          type="button"
+          onClick={() =>
+            onSwitch(mode === "customer" ? "provider" : "customer")
+          }
+          className={`${compactClassName} hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-300`}
+          aria-label={
+            mode === "customer"
+              ? "Uzman moduna geç"
+              : "Proje Sahibi moduna geç"
+          }
+        >
+          {label}
+        </button>
+      </div>
+    );
+  }
+
+  const switchButton = (
+    <button
+      type="button"
+      onClick={() =>
+        onSwitch(mode === "customer" ? "provider" : "customer")
+      }
+      className={`relative h-7 w-[8.25rem] shrink-0 overflow-hidden rounded-full border transition-colors duration-[220ms] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-300 ${
+        mode === "customer"
+          ? "border-violet-200 bg-violet-50 hover:bg-violet-100/80"
+          : "border-emerald-200 bg-emerald-50 hover:bg-emerald-100/80"
+      }`}
+      aria-label={
+        mode === "customer"
+          ? "Uzman moduna geç"
+          : "Proje Sahibi moduna geç"
+      }
+    >
+      <span
+        aria-hidden="true"
+        className={`pointer-events-none absolute top-[3px] left-[3px] h-[22px] w-[22px] rounded-full shadow-sm transition-transform duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+          mode === "provider"
+            ? "translate-x-[6.5rem] bg-emerald-200"
+            : "translate-x-0 bg-violet-200"
+        }`}
+      />
+      <span
+        className={`relative z-10 flex h-full items-center text-[11px] font-medium transition-[color,padding] duration-[220ms] ease-out ${
+          mode === "customer"
+            ? "justify-end pr-2.5 pl-8 text-violet-800"
+            : "justify-start pl-2.5 pr-8 text-emerald-800"
+        }`}
+      >
+        {mode === "customer" ? "Proje Sahibi" : "Uzman"}
+      </span>
+    </button>
+  );
+
+  const staticBadge = (
+    <div
+      className={`relative h-7 w-[8.25rem] shrink-0 overflow-hidden rounded-full border ${
+        mode === "customer"
+          ? "border-violet-200 bg-violet-50"
+          : "border-emerald-200 bg-emerald-50"
+      }`}
+      aria-label={mode === "customer" ? "Proje Sahibi" : "Uzman"}
+    >
+      <span
+        aria-hidden="true"
+        className={`pointer-events-none absolute top-[3px] left-[3px] h-[22px] w-[22px] rounded-full shadow-sm ${
+          mode === "provider"
+            ? "translate-x-[6.5rem] bg-emerald-200"
+            : "translate-x-0 bg-violet-200"
+        }`}
+      />
+      <span
+        className={`relative z-10 flex h-full items-center text-[11px] font-medium ${
+          mode === "customer"
+            ? "justify-end pr-2.5 pl-8 text-violet-800"
+            : "justify-start pl-2.5 pr-8 text-emerald-800"
+        }`}
+      >
+        {mode === "customer" ? "Proje Sahibi" : "Uzman"}
+      </span>
+    </div>
+  );
+
+  return (
+    <div className={className}>{canSwitch ? switchButton : staticBadge}</div>
+  );
+}
+
 function getNotificationHref(notification: Notification) {
   const href = notification.href?.trim() ?? "";
 
@@ -95,6 +240,9 @@ export default function Navbar() {
   const router = useRouter();
   const pathname = usePathname();
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const discoverRef = useRef<HTMLDivElement>(null);
+  const discoverMobileRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   const [email, setEmail] = useState<string | null>(null);
   const [permissions, setPermissions] =
@@ -105,6 +253,8 @@ export default function Navbar() {
   const [supportUnreadCount, setSupportUnreadCount] = useState(0);
   const [ready, setReady] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [discoverOpen, setDiscoverOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>(
     [],
   );
@@ -117,6 +267,8 @@ export default function Navbar() {
 
   useEffect(() => {
     setDropdownOpen(false);
+    setDiscoverOpen(false);
+    setMenuOpen(false);
     loadNavbar();
   }, [pathname]);
 
@@ -177,22 +329,43 @@ export default function Navbar() {
   }, [unreadCount]);
 
   useEffect(() => {
-    if (!dropdownOpen) {
+    if (!dropdownOpen && !discoverOpen && !menuOpen) {
       return;
     }
 
     function handlePointerDown(event: MouseEvent) {
+      const target = event.target as Node;
+
       if (
+        dropdownOpen &&
         dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
+        !dropdownRef.current.contains(target)
       ) {
         setDropdownOpen(false);
+      }
+
+      if (
+        discoverOpen &&
+        !discoverRef.current?.contains(target) &&
+        !discoverMobileRef.current?.contains(target)
+      ) {
+        setDiscoverOpen(false);
+      }
+
+      if (
+        menuOpen &&
+        menuRef.current &&
+        !menuRef.current.contains(target)
+      ) {
+        setMenuOpen(false);
       }
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setDropdownOpen(false);
+        setDiscoverOpen(false);
+        setMenuOpen(false);
       }
     }
 
@@ -203,7 +376,7 @@ export default function Navbar() {
       document.removeEventListener("mousedown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [dropdownOpen]);
+  }, [dropdownOpen, discoverOpen, menuOpen]);
 
   function applySavedMode(nextPermissions: Permissions | null) {
     if (!nextPermissions) {
@@ -343,6 +516,8 @@ export default function Navbar() {
   async function toggleDropdown() {
     const nextOpen = !dropdownOpen;
     setDropdownOpen(nextOpen);
+    setDiscoverOpen(false);
+    setMenuOpen(false);
 
     if (nextOpen) {
       await loadDropdownNotifications();
@@ -423,6 +598,8 @@ export default function Navbar() {
     if (previewUser) {
       persistActiveMode(nextMode);
       setMode(nextMode);
+      setDiscoverOpen(false);
+      setMenuOpen(false);
       if (pathname !== "/") {
         router.push("/");
       }
@@ -441,6 +618,8 @@ export default function Navbar() {
 
     persistActiveMode(nextMode);
     setMode(nextMode);
+    setDiscoverOpen(false);
+    setMenuOpen(false);
     setPermissions((current) =>
       current
         ? {
@@ -479,6 +658,22 @@ export default function Navbar() {
   const canSwitchModes =
     (permissions?.customer_enabled ?? false) &&
     (permissions?.provider_enabled ?? false);
+  const discoverItems = isCustomerMode
+    ? CUSTOMER_DISCOVER_ITEMS
+    : isProviderMode
+      ? PROVIDER_DISCOVER_ITEMS
+      : [];
+  const mobileNavItems = isCustomerMode
+    ? CUSTOMER_MOBILE_NAV_ITEMS
+    : isProviderMode
+      ? PROVIDER_MOBILE_NAV_ITEMS
+      : [];
+  const isDiscoverActive = discoverItems.some((item) =>
+    isDiscoverHrefActive(pathname, item.href),
+  );
+  const isMobileNavActive = mobileNavItems.some((item) =>
+    isDiscoverHrefActive(pathname, item.href),
+  );
 
   return (
     <nav
@@ -490,114 +685,115 @@ export default function Navbar() {
             : "border-zinc-200"
       }`}
     >
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <div className="flex items-center gap-5">
+      <div className="mx-auto max-w-6xl px-4 py-3 sm:px-6 sm:py-4">
+        <div className="flex items-center justify-between gap-3 sm:gap-5">
+        <div className="flex min-w-0 items-center gap-3 sm:gap-5">
           <Link
             href="/"
-            className="text-lg font-semibold tracking-tight"
+            className="shrink-0 text-base font-semibold tracking-tight sm:text-lg"
           >
             Project Match
           </Link>
 
           {mode === "customer" || mode === "provider" ? (
-            canSwitchModes ? (
-              <button
-                type="button"
-                onClick={() =>
-                  void switchActiveMode(
-                    mode === "customer" ? "provider" : "customer",
-                  )
-                }
-                className={`relative h-7 w-[8.25rem] shrink-0 overflow-hidden rounded-full border transition-colors duration-[220ms] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-300 ${
-                  mode === "customer"
-                    ? "border-violet-200 bg-violet-50 hover:bg-violet-100/80"
-                    : "border-emerald-200 bg-emerald-50 hover:bg-emerald-100/80"
-                }`}
-                aria-label={
-                  mode === "customer"
-                    ? "Uzman moduna geç"
-                    : "Proje Sahibi moduna geç"
-                }
-              >
-                <span
-                  aria-hidden="true"
-                  className={`pointer-events-none absolute top-[3px] left-[3px] h-[22px] w-[22px] rounded-full shadow-sm transition-transform duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                    mode === "provider"
-                      ? "translate-x-[6.5rem] bg-emerald-200"
-                      : "translate-x-0 bg-violet-200"
-                  }`}
-                />
-                <span
-                  className={`relative z-10 flex h-full items-center text-[11px] font-medium transition-[color,padding] duration-[220ms] ease-out ${
-                    mode === "customer"
-                      ? "justify-end pr-2.5 pl-8 text-violet-800"
-                      : "justify-start pl-2.5 pr-8 text-emerald-800"
-                  }`}
-                >
-                  {mode === "customer" ? "Proje Sahibi" : "Uzman"}
-                </span>
-              </button>
-            ) : (
-              <div
-                className={`relative h-7 w-[8.25rem] shrink-0 overflow-hidden rounded-full border ${
-                  mode === "customer"
-                    ? "border-violet-200 bg-violet-50"
-                    : "border-emerald-200 bg-emerald-50"
-                }`}
-                aria-label={
-                  mode === "customer" ? "Proje Sahibi" : "Uzman"
-                }
-              >
-                <span
-                  aria-hidden="true"
-                  className={`pointer-events-none absolute top-[3px] left-[3px] h-[22px] w-[22px] rounded-full shadow-sm ${
-                    mode === "provider"
-                      ? "translate-x-[6.5rem] bg-emerald-200"
-                      : "translate-x-0 bg-violet-200"
-                  }`}
-                />
-                <span
-                  className={`relative z-10 flex h-full items-center text-[11px] font-medium ${
-                    mode === "customer"
-                      ? "justify-end pr-2.5 pl-8 text-violet-800"
-                      : "justify-start pl-2.5 pr-8 text-emerald-800"
-                  }`}
-                >
-                  {mode === "customer" ? "Proje Sahibi" : "Uzman"}
-                </span>
-              </div>
-            )
+            <ModeControl
+              mode={mode}
+              canSwitch={canSwitchModes}
+              onSwitch={(nextMode) => void switchActiveMode(nextMode)}
+              className="hidden sm:block"
+            />
           ) : null}
         </div>
 
-        <div className="flex items-center gap-5">
-          {mode === "customer" && (
-            <>
-              <Link
-                href="/my-jobs"
-                className="hidden text-sm font-medium text-zinc-600 hover:text-zinc-950 sm:block"
+        <div className="flex min-w-0 items-center justify-end gap-2 sm:gap-5">
+          {discoverItems.length > 0 ? (
+            <div className="relative hidden sm:block" ref={discoverRef}>
+              <button
+                type="button"
+                onClick={() => {
+                  setDiscoverOpen((open) => !open);
+                  setDropdownOpen(false);
+                  setMenuOpen(false);
+                }}
+                className={`shrink-0 text-sm font-medium ${
+                  isDiscoverActive
+                    ? "text-zinc-950"
+                    : isMobileNavActive
+                      ? "text-zinc-950 sm:text-zinc-600 sm:hover:text-zinc-950"
+                      : "text-zinc-600 hover:text-zinc-950"
+                }`}
+                aria-expanded={discoverOpen}
+                aria-haspopup="true"
               >
-                İşlerim
-              </Link>
+                Keşfet
+              </button>
 
-              <Link
-                href="/providers"
-                className="hidden text-sm font-medium text-zinc-600 hover:text-zinc-950 sm:block"
-              >
-                Uzmanlar
-              </Link>
-            </>
+              {discoverOpen ? (
+                <div className="fixed inset-x-4 z-50 mt-2 max-h-[min(24rem,70vh)] overflow-y-auto rounded-xl border border-zinc-200 bg-white py-1 sm:absolute sm:inset-x-auto sm:left-0 sm:right-auto sm:mt-3 sm:max-h-none sm:w-auto sm:min-w-[13.5rem] sm:overflow-visible">
+                  {discoverItems.map((item) => {
+                    const itemActive = isDiscoverHrefActive(
+                      pathname,
+                      item.href,
+                    );
+
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href}
+                        onClick={() => setDiscoverOpen(false)}
+                        className={`block px-4 py-3 text-sm sm:py-2.5 ${
+                          itemActive
+                            ? "font-medium text-zinc-950"
+                            : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950"
+                        }`}
+                      >
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+
+                  {mobileNavItems.length > 0 ? (
+                    <>
+                      <div className="my-1 border-t border-zinc-100 sm:hidden" />
+                      {mobileNavItems.map((item) => {
+                        const itemActive = isDiscoverHrefActive(
+                          pathname,
+                          item.href,
+                        );
+
+                        return (
+                          <Link
+                            key={item.href}
+                            href={item.href}
+                            onClick={() => setDiscoverOpen(false)}
+                            className={`block px-4 py-3 text-sm sm:hidden ${
+                              itemActive
+                                ? "font-medium text-zinc-950"
+                                : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950"
+                            }`}
+                          >
+                            {item.label}
+                          </Link>
+                        );
+                      })}
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {mode === "customer" && (
+            <Link
+              href="/my-jobs"
+              className="hidden text-sm font-medium text-zinc-600 hover:text-zinc-950 sm:block"
+            >
+              İşlerim
+            </Link>
           )}
 
           {mode === "provider" && (
             <>
-              <Link
-                href="/jobs"
-                className="hidden text-sm font-medium text-zinc-600 hover:text-zinc-950 sm:block"
-              >
-                Uygun İşler
-              </Link>
-
               <Link
                 href="/my-offers"
                 className="hidden text-sm font-medium text-zinc-600 hover:text-zinc-950 sm:block"
@@ -646,17 +842,37 @@ export default function Navbar() {
             <button
               type="button"
               onClick={() => toggleDropdown()}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-zinc-600 hover:text-zinc-950"
+              className="relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-medium text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950 sm:h-auto sm:w-auto sm:gap-1.5 sm:rounded-none sm:hover:bg-transparent"
+              aria-label="Bildirimler"
               aria-expanded={dropdownOpen}
               aria-haspopup="true"
             >
-              <span>Bildirimler</span>
+              <span className="hidden sm:inline">Bildirimler</span>
+              <svg
+                viewBox="0 0 20 20"
+                fill="none"
+                aria-hidden="true"
+                className="h-5 w-5 sm:hidden"
+              >
+                <path
+                  d="M10 2.5a4.5 4.5 0 0 0-4.5 4.5c0 3.1-1.2 4.4-1.9 5.1-.2.2-.3.5-.1.8.2.3.5.4.8.4h11.4c.3 0 .6-.1.8-.4.2-.3.1-.6-.1-.8-.7-.7-1.9-2-1.9-5.1A4.5 4.5 0 0 0 10 2.5Z"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M8 16.2a2.1 2.1 0 0 0 4 0"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
 
               {unreadCount > 0 ? (
                 <span
-                  className={`inline-flex h-[21px] items-center rounded-full bg-rose-50 px-2 text-[11px] font-medium leading-none text-rose-700 transition-transform duration-200 ${
+                  className={`absolute top-0 right-0 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-rose-50 px-1 text-[10px] font-medium leading-none text-rose-700 sm:static sm:h-[21px] sm:min-w-0 sm:px-2 sm:text-[11px] ${
                     badgePulse ? "scale-110" : "scale-100"
-                  }`}
+                  } transition-transform duration-200`}
                 >
                   {unreadCount > 9 ? "9+" : unreadCount}
                 </span>
@@ -664,7 +880,7 @@ export default function Navbar() {
             </button>
 
             {dropdownOpen ? (
-              <div className="absolute right-0 z-50 mt-3 w-[min(calc(100vw-2rem),24rem)] overflow-hidden rounded-xl border border-zinc-200 bg-white">
+              <div className="fixed inset-x-4 z-50 mt-2 max-h-[min(24rem,70vh)] overflow-hidden rounded-xl border border-zinc-200 bg-white sm:absolute sm:inset-x-auto sm:right-0 sm:left-auto sm:mt-3 sm:w-96">
                 <div className="flex items-center justify-between gap-3 border-b border-zinc-100 px-4 py-3">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-semibold text-zinc-900">
@@ -769,12 +985,174 @@ export default function Navbar() {
             <button
               type="button"
               onClick={handleLogout}
-              className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium hover:bg-zinc-50"
+              className="hidden rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium hover:bg-zinc-50 sm:inline-flex"
             >
               Çıkış Yap
             </button>
           )}
+
+          <div className="relative sm:hidden" ref={menuRef}>
+            <button
+              type="button"
+              onClick={() => {
+                setMenuOpen((open) => !open);
+                setDiscoverOpen(false);
+                setDropdownOpen(false);
+              }}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950"
+              aria-label="Menü"
+              aria-expanded={menuOpen}
+              aria-haspopup="true"
+            >
+              <svg
+                viewBox="0 0 20 20"
+                fill="none"
+                aria-hidden="true"
+                className="h-5 w-5"
+              >
+                <path
+                  d="M10 10.8a2.3 2.3 0 1 0 0-4.6 2.3 2.3 0 0 0 0 4.6Z"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                />
+                <path
+                  d="M4.2 16.2c.8-2 3-3.2 5.8-3.2s5 1.2 5.8 3.2"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+
+            {menuOpen ? (
+              <div className="fixed inset-x-4 z-50 mt-2 overflow-hidden rounded-xl border border-zinc-200 bg-white py-1 sm:absolute sm:inset-x-auto sm:right-0 sm:left-auto sm:w-56">
+                <Link
+                  href="/account"
+                  onClick={() => setMenuOpen(false)}
+                  className="block px-4 py-3 text-sm text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950"
+                >
+                  Hesap
+                </Link>
+                <Link
+                  href="/support"
+                  onClick={() => setMenuOpen(false)}
+                  className="block px-4 py-3 text-sm text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950"
+                >
+                  Destek & Yardım
+                </Link>
+                {isAdmin && !previewUser ? (
+                  <Link
+                    href="/admin"
+                    onClick={() => setMenuOpen(false)}
+                    className="block px-4 py-3 text-sm text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950"
+                  >
+                    Admin
+                    {supportUnreadCount > 0 ? ` (${supportUnreadCount > 99 ? "99+" : supportUnreadCount})` : ""}
+                  </Link>
+                ) : null}
+                {!previewUser ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void handleLogout();
+                    }}
+                    className="block w-full px-4 py-3 text-left text-sm text-zinc-600 hover:bg-zinc-50 hover:text-zinc-950"
+                  >
+                    Çıkış Yap
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
+        </div>
+
+        {mode === "customer" || mode === "provider" ? (
+          <div className="mt-2.5 flex items-center justify-between gap-3 sm:hidden">
+            <ModeControl
+              mode={mode}
+              canSwitch={canSwitchModes}
+              onSwitch={(nextMode) => void switchActiveMode(nextMode)}
+              compact
+            />
+
+            {discoverItems.length > 0 ? (
+              <div className="relative" ref={discoverMobileRef}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDiscoverOpen((open) => !open);
+                    setDropdownOpen(false);
+                    setMenuOpen(false);
+                  }}
+                  className={`shrink-0 text-sm font-medium ${
+                    isDiscoverActive || isMobileNavActive
+                      ? "text-zinc-950"
+                      : "text-zinc-600"
+                  }`}
+                  aria-expanded={discoverOpen}
+                  aria-haspopup="true"
+                >
+                  Keşfet
+                </button>
+
+                {discoverOpen ? (
+                  <div className="fixed inset-x-4 z-50 mt-2 max-h-[min(24rem,70vh)] overflow-y-auto rounded-xl border border-zinc-200 bg-white py-1">
+                    {discoverItems.map((item) => {
+                      const itemActive = isDiscoverHrefActive(
+                        pathname,
+                        item.href,
+                      );
+
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          onClick={() => setDiscoverOpen(false)}
+                          className={`block px-4 py-3 text-sm ${
+                            itemActive
+                              ? "font-medium text-zinc-950"
+                              : "text-zinc-600"
+                          }`}
+                        >
+                          {item.label}
+                        </Link>
+                      );
+                    })}
+
+                    {mobileNavItems.length > 0 ? (
+                      <>
+                        <div className="my-1 border-t border-zinc-100" />
+                        {mobileNavItems.map((item) => {
+                          const itemActive = isDiscoverHrefActive(
+                            pathname,
+                            item.href,
+                          );
+
+                          return (
+                            <Link
+                              key={item.href}
+                              href={item.href}
+                              onClick={() => setDiscoverOpen(false)}
+                              className={`block px-4 py-3 text-sm ${
+                                itemActive
+                                  ? "font-medium text-zinc-950"
+                                  : "text-zinc-600"
+                              }`}
+                            >
+                              {item.label}
+                            </Link>
+                          );
+                        })}
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </nav>
   );
