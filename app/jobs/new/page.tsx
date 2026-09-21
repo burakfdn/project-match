@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 import { createClient } from "@/lib/supabase/client";
 
@@ -480,7 +481,16 @@ export default function NewJobPage() {
   return (
     <main className="min-h-screen px-4 py-12">
       <div className="mx-auto max-w-2xl">
-        <div>
+        {targetProviderId ? (
+          <Link
+            href={`/providers/${targetProviderId}`}
+            className="text-sm font-medium text-zinc-500 transition hover:text-zinc-900"
+          >
+            ← Uzman profiline dön
+          </Link>
+        ) : null}
+
+        <div className={targetProviderId ? "mt-6" : undefined}>
           <p className="text-sm font-medium text-zinc-500">
             Müşteri Paneli
           </p>
