@@ -6,17 +6,25 @@ import Link from "next/link";
 
 import { createClient } from "@/lib/supabase/client";
 import {
+  ACTIVE_MODE_CHANGE_EVENT,
+  persistActiveMode,
+  resolveActiveMode,
+  type ActiveMode,
+} from "@/lib/active-mode";
+import {
   clearPreviewUser,
   getPreviewUser,
   type PreviewUser,
 } from "@/lib/preview";
 
-type Mode = "customer" | "provider" | null;
+type Mode = ActiveMode | null;
 
 type Permissions = {
   customer_enabled: boolean;
   provider_enabled: boolean;
   is_admin: boolean;
+  active_mode?: string | null;
+  role?: string | null;
 };
 
 export default function HomePage() {
@@ -31,7 +39,11 @@ export default function HomePage() {
     useState<PreviewUser | null>(null);
 
   useEffect(() => {
-    async function loadUser() {
+    async function loadUser(silent = false) {
+      if (!silent) {
+        setLoading(true);
+      }
+
       const supabase = createClient();
 
       const {
@@ -58,32 +70,13 @@ export default function HomePage() {
         };
 
         setPermissions(previewPermissions);
-
-        const savedMode = localStorage.getItem(
-          "project-match-mode",
+        setMode(
+          resolveActiveMode({
+            activeMode: null,
+            customerEnabled: previewPermissions.customer_enabled,
+            providerEnabled: previewPermissions.provider_enabled,
+          }),
         );
-
-        if (
-          savedMode === "customer" &&
-          previewPermissions.customer_enabled
-        ) {
-          setMode("customer");
-        } else if (
-          savedMode === "provider" &&
-          previewPermissions.provider_enabled
-        ) {
-          setMode("provider");
-        } else if (
-          previewPermissions.provider_enabled &&
-          !previewPermissions.customer_enabled
-        ) {
-          setMode("provider");
-        } else if (
-          previewPermissions.customer_enabled &&
-          !previewPermissions.provider_enabled
-        ) {
-          setMode("customer");
-        }
 
         setLoading(false);
         return;
@@ -94,7 +87,7 @@ export default function HomePage() {
       const { data: profile } = await supabase
         .from("profiles")
         .select(
-          "customer_enabled, provider_enabled, is_admin",
+          "customer_enabled, provider_enabled, is_admin, active_mode, role",
         )
         .eq("id", user.id)
         .single();
@@ -103,53 +96,75 @@ export default function HomePage() {
         customer_enabled: false,
         provider_enabled: false,
         is_admin: false,
+        active_mode: null,
+        role: null,
       };
 
       setPermissions(userPermissions);
 
-      const savedMode = localStorage.getItem(
-        "project-match-mode",
-      );
+      const nextMode = resolveActiveMode({
+        activeMode: userPermissions.active_mode,
+        role: userPermissions.role,
+        customerEnabled: userPermissions.customer_enabled,
+        providerEnabled: userPermissions.provider_enabled,
+      });
 
-      if (
-        savedMode === "customer" &&
-        userPermissions.customer_enabled
-      ) {
-        setMode("customer");
-      } else if (
-        savedMode === "provider" &&
-        userPermissions.provider_enabled
-      ) {
-        setMode("provider");
-      } else if (
-        userPermissions.provider_enabled &&
-        !userPermissions.customer_enabled
-      ) {
-        setMode("provider");
-      } else if (
-        userPermissions.customer_enabled &&
-        !userPermissions.provider_enabled
-      ) {
-        setMode("customer");
+      setMode(nextMode);
+
+      if (nextMode) {
+        localStorage.setItem("project-match-mode", nextMode);
       }
 
       setLoading(false);
     }
 
-    loadUser();
+    void loadUser();
+
+    function handleModeChange() {
+      void loadUser(true);
+    }
+
+    window.addEventListener(
+      ACTIVE_MODE_CHANGE_EVENT,
+      handleModeChange,
+    );
+
+    return () => {
+      window.removeEventListener(
+        ACTIVE_MODE_CHANGE_EVENT,
+        handleModeChange,
+      );
+    };
   }, []);
 
-  function switchMode(newMode: "customer" | "provider") {
-    localStorage.setItem(
-      "project-match-mode",
-      newMode,
-    );
+  async function switchMode(newMode: ActiveMode) {
+    if (!previewUser) {
+      const supabase = createClient();
+      const { error } = await supabase.rpc("set_my_active_mode", {
+        p_mode: newMode,
+      });
 
+      if (error) {
+        console.error("set_my_active_mode", error);
+        return;
+      }
+
+      setPermissions((current) =>
+        current
+          ? {
+              ...current,
+              active_mode: newMode,
+              customer_enabled:
+                newMode === "customer" ? true : current.customer_enabled,
+              provider_enabled:
+                newMode === "provider" ? true : current.provider_enabled,
+            }
+          : current,
+      );
+    }
+
+    persistActiveMode(newMode);
     setMode(newMode);
-
-    window.dispatchEvent(
-      new Event("project-match-mode-change"),
-    );
   }
 
   function closePreview() {
@@ -427,37 +442,25 @@ export default function HomePage() {
         {mode === "customer" &&
           customerEnabled && (
             <>
-              <div className="flex items-start justify-between gap-6">
-                <div className="max-w-3xl">
-                  <p className="text-sm font-medium text-violet-600">
-                    Proje Sahibi Paneli
-                  </p>
+              <div className="max-w-3xl">
+                <p className="text-sm font-medium text-violet-600">
+                  Proje Sahibi Paneli
+                </p>
 
-                  <h1 className="mt-3 text-4xl font-semibold tracking-tight">
-                    Hoş geldin.
-                  </h1>
+                <h1 className="mt-3 text-4xl font-semibold tracking-tight">
+                  Hoş geldin.
+                </h1>
 
-                  <p className="mt-3 text-zinc-600">
-                    İhtiyacını yayınla ve uygun uzmanlardan teklif al.
-                  </p>
+                <p className="mt-3 text-zinc-600">
+                  İhtiyacını yayınla ve uygun uzmanlardan teklif al.
+                </p>
 
-                  <Link
-                    href="/providers"
-                    className="mt-3 inline-block text-sm font-medium text-violet-700 hover:text-violet-900"
-                  >
-                    Uzmanları keşfet →
-                  </Link>
-                </div>
-
-                {bothModesAvailable && (
-                  <button
-                    type="button"
-                    onClick={() => switchMode("provider")}
-                    className="shrink-0 rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100"
-                  >
-                    Uzman Moduna Geç
-                  </button>
-                )}
+                <Link
+                  href="/providers"
+                  className="mt-3 inline-block text-sm font-medium text-violet-700 hover:text-violet-900"
+                >
+                  Uzmanları keşfet →
+                </Link>
               </div>
 
               <div className="mt-10 grid gap-5 sm:grid-cols-2">
@@ -511,30 +514,18 @@ export default function HomePage() {
         {mode === "provider" &&
           providerEnabled && (
             <>
-              <div className="flex items-start justify-between gap-6">
-                <div className="max-w-3xl">
-                  <p className="text-sm font-medium text-emerald-600">
-                    Uzman Paneli
-                  </p>
+              <div className="max-w-3xl">
+                <p className="text-sm font-medium text-emerald-600">
+                  Uzman Paneli
+                </p>
 
-                  <h1 className="mt-3 text-4xl font-semibold tracking-tight">
-                    Hoş geldin.
-                  </h1>
+                <h1 className="mt-3 text-4xl font-semibold tracking-tight">
+                  Hoş geldin.
+                </h1>
 
-                  <p className="mt-3 text-zinc-600">
-                    Sana uygun işleri keşfet ve tekliflerini yönet.
-                  </p>
-                </div>
-
-                {bothModesAvailable && (
-                  <button
-                    type="button"
-                    onClick={() => switchMode("customer")}
-                    className="shrink-0 rounded-lg border border-violet-300 bg-violet-50 px-4 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100"
-                  >
-                    Proje Sahibi Moduna Geç
-                  </button>
-                )}
+                <p className="mt-3 text-zinc-600">
+                  Sana uygun işleri keşfet ve tekliflerini yönet.
+                </p>
               </div>
 
               <div className="mt-10 grid gap-5 sm:grid-cols-2">

@@ -6,13 +6,21 @@ import Link from "next/link";
 
 import { createClient } from "@/lib/supabase/client";
 import { clearPreviewUser, getPreviewUser } from "@/lib/preview";
+import {
+  ACTIVE_MODE_CHANGE_EVENT,
+  persistActiveMode,
+  resolveActiveMode,
+  type ActiveMode,
+} from "@/lib/active-mode";
 
-type Mode = "customer" | "provider" | null;
+type Mode = ActiveMode | null;
 
 type Permissions = {
   customer_enabled: boolean;
   provider_enabled: boolean;
   is_admin: boolean;
+  active_mode?: string | null;
+  role?: string | null;
 };
 
 type Notification = {
@@ -133,21 +141,21 @@ export default function Navbar() {
 
   useEffect(() => {
     function handleModeChange() {
-      applySavedMode(permissions);
+      void loadNavbar();
     }
 
     window.addEventListener(
-      "project-match-mode-change",
+      ACTIVE_MODE_CHANGE_EVENT,
       handleModeChange,
     );
 
     return () => {
       window.removeEventListener(
-        "project-match-mode-change",
+        ACTIVE_MODE_CHANGE_EVENT,
         handleModeChange,
       );
     };
-  }, [permissions]);
+  }, []);
 
   useEffect(() => {
     const previousCount = previousUnreadCountRef.current;
@@ -203,28 +211,14 @@ export default function Navbar() {
       return;
     }
 
-    const savedMode = localStorage.getItem("project-match-mode");
-
-    if (savedMode === "customer" && nextPermissions.customer_enabled) {
-      setMode("customer");
-    } else if (
-      savedMode === "provider" &&
-      nextPermissions.provider_enabled
-    ) {
-      setMode("provider");
-    } else if (
-      nextPermissions.provider_enabled &&
-      !nextPermissions.customer_enabled
-    ) {
-      setMode("provider");
-    } else if (
-      nextPermissions.customer_enabled &&
-      !nextPermissions.provider_enabled
-    ) {
-      setMode("customer");
-    } else {
-      setMode(null);
-    }
+    setMode(
+      resolveActiveMode({
+        activeMode: nextPermissions.active_mode,
+        role: nextPermissions.role,
+        customerEnabled: nextPermissions.customer_enabled,
+        providerEnabled: nextPermissions.provider_enabled,
+      }),
+    );
   }
 
   async function loadNavbar() {
@@ -272,7 +266,7 @@ export default function Navbar() {
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("customer_enabled, provider_enabled, is_admin")
+        .select("customer_enabled, provider_enabled, is_admin, active_mode, role")
         .eq("id", user.id)
         .single();
 
@@ -280,6 +274,8 @@ export default function Navbar() {
         customer_enabled: false,
         provider_enabled: false,
         is_admin: false,
+        active_mode: null,
+        role: null,
       };
 
       setPermissions(nextPermissions);
@@ -415,6 +411,53 @@ export default function Navbar() {
     setMarkingAll(false);
   }
 
+  async function switchActiveMode(nextMode: ActiveMode) {
+    const canSwitchModes =
+      (permissions?.customer_enabled ?? false) &&
+      (permissions?.provider_enabled ?? false);
+
+    if (!canSwitchModes) {
+      return;
+    }
+
+    if (previewUser) {
+      persistActiveMode(nextMode);
+      setMode(nextMode);
+      if (pathname !== "/") {
+        router.push("/");
+      }
+      return;
+    }
+
+    const supabase = createClient();
+    const { error } = await supabase.rpc("set_my_active_mode", {
+      p_mode: nextMode,
+    });
+
+    if (error) {
+      console.error("set_my_active_mode", error);
+      return;
+    }
+
+    persistActiveMode(nextMode);
+    setMode(nextMode);
+    setPermissions((current) =>
+      current
+        ? {
+            ...current,
+            active_mode: nextMode,
+            customer_enabled:
+              nextMode === "customer" ? true : current.customer_enabled,
+            provider_enabled:
+              nextMode === "provider" ? true : current.provider_enabled,
+          }
+        : current,
+    );
+    if (pathname !== "/") {
+      router.push("/");
+    }
+  }
+
   async function handleLogout() {
     const supabase = createClient();
 
@@ -430,11 +473,12 @@ export default function Navbar() {
     return null;
   }
 
-  const customerEnabled = permissions?.customer_enabled ?? false;
-  const providerEnabled = permissions?.provider_enabled ?? false;
   const isAdmin = permissions?.is_admin ?? false;
   const isCustomerMode = mode === "customer";
   const isProviderMode = mode === "provider";
+  const canSwitchModes =
+    (permissions?.customer_enabled ?? false) &&
+    (permissions?.provider_enabled ?? false);
 
   return (
     <nav
@@ -455,21 +499,79 @@ export default function Navbar() {
             Project Match
           </Link>
 
-          {mode === "customer" && (
-            <span className="hidden rounded-full bg-violet-50 px-3 py-1 text-xs font-medium text-violet-700 sm:inline-flex">
-              ● Proje Sahibi Modu
-            </span>
-          )}
-
-          {mode === "provider" && (
-            <span className="hidden rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 sm:inline-flex">
-              ● Uzman Modu
-            </span>
-          )}
+          {mode === "customer" || mode === "provider" ? (
+            canSwitchModes ? (
+              <button
+                type="button"
+                onClick={() =>
+                  void switchActiveMode(
+                    mode === "customer" ? "provider" : "customer",
+                  )
+                }
+                className={`relative h-7 w-[8.25rem] shrink-0 overflow-hidden rounded-full border transition-colors duration-[220ms] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-300 ${
+                  mode === "customer"
+                    ? "border-violet-200 bg-violet-50 hover:bg-violet-100/80"
+                    : "border-emerald-200 bg-emerald-50 hover:bg-emerald-100/80"
+                }`}
+                aria-label={
+                  mode === "customer"
+                    ? "Uzman moduna geç"
+                    : "Proje Sahibi moduna geç"
+                }
+              >
+                <span
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute top-[3px] left-[3px] h-[22px] w-[22px] rounded-full shadow-sm transition-transform duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                    mode === "provider"
+                      ? "translate-x-[6.5rem] bg-emerald-200"
+                      : "translate-x-0 bg-violet-200"
+                  }`}
+                />
+                <span
+                  className={`relative z-10 flex h-full items-center text-[11px] font-medium transition-[color,padding] duration-[220ms] ease-out ${
+                    mode === "customer"
+                      ? "justify-end pr-2.5 pl-8 text-violet-800"
+                      : "justify-start pl-2.5 pr-8 text-emerald-800"
+                  }`}
+                >
+                  {mode === "customer" ? "Proje Sahibi" : "Uzman"}
+                </span>
+              </button>
+            ) : (
+              <div
+                className={`relative h-7 w-[8.25rem] shrink-0 overflow-hidden rounded-full border ${
+                  mode === "customer"
+                    ? "border-violet-200 bg-violet-50"
+                    : "border-emerald-200 bg-emerald-50"
+                }`}
+                aria-label={
+                  mode === "customer" ? "Proje Sahibi" : "Uzman"
+                }
+              >
+                <span
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute top-[3px] left-[3px] h-[22px] w-[22px] rounded-full shadow-sm ${
+                    mode === "provider"
+                      ? "translate-x-[6.5rem] bg-emerald-200"
+                      : "translate-x-0 bg-violet-200"
+                  }`}
+                />
+                <span
+                  className={`relative z-10 flex h-full items-center text-[11px] font-medium ${
+                    mode === "customer"
+                      ? "justify-end pr-2.5 pl-8 text-violet-800"
+                      : "justify-start pl-2.5 pr-8 text-emerald-800"
+                  }`}
+                >
+                  {mode === "customer" ? "Proje Sahibi" : "Uzman"}
+                </span>
+              </div>
+            )
+          ) : null}
         </div>
 
         <div className="flex items-center gap-5">
-          {customerEnabled && (
+          {mode === "customer" && (
             <>
               <Link
                 href="/my-jobs"
@@ -487,7 +589,7 @@ export default function Navbar() {
             </>
           )}
 
-          {providerEnabled && (
+          {mode === "provider" && (
             <>
               <Link
                 href="/jobs"
@@ -525,6 +627,13 @@ export default function Navbar() {
               ) : null}
             </Link>
           )}
+
+          <Link
+            href="/account"
+            className="hidden text-sm font-medium text-zinc-600 hover:text-zinc-950 sm:block"
+          >
+            Hesap
+          </Link>
 
           <Link
             href="/support"

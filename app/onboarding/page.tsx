@@ -3,6 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import {
+  persistActiveMode,
+  type ActiveMode,
+} from "@/lib/active-mode";
 
 type AccountType = "customer" | "provider" | "both" | null;
 
@@ -51,7 +55,21 @@ export default function OnboardingPage() {
       return;
     }
 
-    localStorage.removeItem("project-match-mode");
+    const initialMode: ActiveMode =
+      accountType === "provider" ? "provider" : "customer";
+
+    const { error: modeError } = await supabase.rpc("set_my_active_mode", {
+      p_mode: initialMode,
+    });
+
+    if (modeError) {
+      console.error(modeError);
+      setError("Başlangıç modu kaydedilirken bir hata oluştu.");
+      setPending(false);
+      return;
+    }
+
+    persistActiveMode(initialMode);
 
     router.push("/");
     router.refresh();
