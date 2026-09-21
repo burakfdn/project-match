@@ -6,13 +6,19 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { getPreviewUser } from "@/lib/preview";
 
-type WorkModeFilter = "all" | "remote" | "on_site" | "both";
+type WorkModeFilter = "all" | "remote" | "on_site" | "hybrid";
+
+type PortfolioPreview = {
+  id: number;
+  title: string;
+  imageUrl: string | null;
+};
 
 type ProviderCard = {
   id: string;
   fullName: string;
+  bio: string | null;
   city: string | null;
-  experienceYears: number;
   canWorkRemote: boolean;
   canWorkOnSite: boolean;
   services: {
@@ -20,15 +26,12 @@ type ProviderCard = {
     name: string;
     categoryName: string;
   }[];
-  workSampleCount: number;
-  reviewAverage: string | null;
-  reviewCount: number;
+  portfolio: PortfolioPreview[];
 };
 
 type ProfileRow = {
   user_id: string;
   full_name: string | null;
-  experience_years: number | null;
   city: string | null;
   can_work_remote: boolean | null;
   can_work_on_site: boolean | null;
@@ -39,13 +42,19 @@ type ServiceRow = {
   provider_id: string;
   service_id: number;
   service_name: string;
-  category_id: number | null;
   category_name: string | null;
+};
+
+type WorkSampleRow = {
+  id: number;
+  provider_id: string;
+  title: string | null;
+  project_url: string | null;
 };
 
 function getWorkLabel(provider: ProviderCard) {
   if (provider.canWorkRemote && provider.canWorkOnSite) {
-    return "Uzaktan + Yerinde";
+    return "Hibrit";
   }
 
   if (provider.canWorkRemote) {
@@ -59,11 +68,62 @@ function getWorkLabel(provider: ProviderCard) {
   return "Belirtilmemiş";
 }
 
+function getInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+
+  if (parts.length === 0) {
+    return "U";
+  }
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function isImageUrl(url: string | null) {
+  if (!url?.trim()) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(
+      /^https?:\/\//i.test(url) ? url : `https://${url}`,
+    );
+    return /\.(avif|gif|jpe?g|png|svg|webp)(\?.*)?$/i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function excerpt(value: string | null, maxLength = 110) {
+  const trimmed = value?.trim() ?? "";
+
+  if (!trimmed) {
+    return null;
+  }
+
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, maxLength).trimEnd()}…`;
+}
+
+function profileScore(provider: ProviderCard) {
+  return (
+    (provider.bio ? 1 : 0) +
+    (provider.city ? 1 : 0) +
+    (provider.services.length > 0 ? 2 : 0) +
+    (provider.portfolio.length > 0 ? 1 : 0)
+  );
+}
+
 export default function ProvidersPage() {
   const [providers, setProviders] = useState<ProviderCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [serviceFilter, setServiceFilter] = useState("");
   const [cityFilter, setCityFilter] = useState("");
@@ -71,7 +131,7 @@ export default function ProvidersPage() {
     useState<WorkModeFilter>("all");
 
   useEffect(() => {
-    loadProviders();
+    void loadProviders();
   }, []);
 
   async function loadProviders() {
@@ -94,19 +154,13 @@ export default function ProvidersPage() {
     const previewUser = getPreviewUser();
     const viewerId = previewUser?.id ?? user.id;
 
-    const [
-      profilesResult,
-      servicesResult,
-    ] = await Promise.all([
+    const [profilesResult, servicesResult] = await Promise.all([
       supabase.rpc("discover_providers"),
       supabase.rpc("discover_provider_services"),
     ]);
 
     if (profilesResult.error) {
-      console.error(
-        "discover_providers error:",
-        profilesResult.error,
-      );
+      console.error("discover_providers error:", profilesResult.error);
       setError("Bir hata oluştu. Lütfen tekrar deneyin.");
       setProviders([]);
       setLoading(false);
@@ -129,50 +183,36 @@ export default function ProvidersPage() {
       .map((row) => row.user_id)
       .filter((id) => id && id !== viewerId);
 
-    const workCountByProvider: Record<string, number> = {};
-    const ratingsByProvider: Record<string, number[]> = {};
+    const samplesByProvider: Record<string, PortfolioPreview[]> = {};
 
     if (candidateIds.length > 0) {
-      const [workSamplesResult, reviewsResult] = await Promise.all([
-        supabase
-          .from("provider_work_samples")
-          .select("id, provider_id")
-          .in("provider_id", candidateIds),
-        supabase
-          .from("reviews")
-          .select("provider_id, rating")
-          .in("provider_id", candidateIds),
-      ]);
+      const { data: sampleRows, error: samplesError } = await supabase
+        .from("provider_work_samples")
+        .select("id, provider_id, title, project_url, created_at")
+        .in("provider_id", candidateIds)
+        .order("created_at", { ascending: false });
 
-      if (workSamplesResult.error) {
-        console.error(
-          "provider_work_samples error:",
-          workSamplesResult.error,
-        );
+      if (samplesError) {
+        console.error("provider_work_samples error:", samplesError);
       } else {
-        for (const sample of workSamplesResult.data ?? []) {
-          const providerId = sample.provider_id as string;
-          workCountByProvider[providerId] =
-            (workCountByProvider[providerId] ?? 0) + 1;
-        }
-      }
+        for (const sample of (sampleRows ?? []) as WorkSampleRow[]) {
+          const providerId = sample.provider_id;
 
-      if (reviewsResult.error) {
-        console.error("Provider reviews error:", reviewsResult.error);
-      } else {
-        for (const row of reviewsResult.data ?? []) {
-          const providerId = row.provider_id as string;
-          const rating = Number(row.rating);
+          if (!samplesByProvider[providerId]) {
+            samplesByProvider[providerId] = [];
+          }
 
-          if (!providerId || !Number.isFinite(rating)) {
+          if (samplesByProvider[providerId].length >= 3) {
             continue;
           }
 
-          if (!ratingsByProvider[providerId]) {
-            ratingsByProvider[providerId] = [];
-          }
-
-          ratingsByProvider[providerId].push(rating);
+          samplesByProvider[providerId].push({
+            id: sample.id,
+            title: sample.title?.trim() || "Çalışma",
+            imageUrl: isImageUrl(sample.project_url)
+              ? sample.project_url
+              : null,
+          });
         }
       }
     }
@@ -201,33 +241,27 @@ export default function ProvidersPage() {
           return null;
         }
 
-        const ratings = ratingsByProvider[id] ?? [];
-        const reviewCount = ratings.length;
-        const reviewAverage =
-          reviewCount === 0
-            ? null
-            : (
-                Math.round(
-                  (ratings.reduce((sum, rating) => sum + rating, 0) /
-                    reviewCount) *
-                    10,
-                ) / 10
-              ).toFixed(1);
-
         return {
           id,
           fullName: row.full_name?.trim() || "İsimsiz Uzman",
-          city: row.city,
-          experienceYears: Number(row.experience_years ?? 0),
+          bio: row.bio?.trim() || null,
+          city: row.city?.trim() || null,
           canWorkRemote: Boolean(row.can_work_remote),
           canWorkOnSite: Boolean(row.can_work_on_site),
           services: servicesByProvider[id] ?? [],
-          workSampleCount: workCountByProvider[id] ?? 0,
-          reviewAverage,
-          reviewCount,
+          portfolio: samplesByProvider[id] ?? [],
         };
       })
-      .filter((item): item is ProviderCard => item !== null);
+      .filter((item): item is ProviderCard => item !== null)
+      .sort((a, b) => {
+        const scoreDiff = profileScore(b) - profileScore(a);
+
+        if (scoreDiff !== 0) {
+          return scoreDiff;
+        }
+
+        return a.fullName.localeCompare(b.fullName, "tr");
+      });
 
     setProviders(nextProviders);
     setLoading(false);
@@ -252,10 +286,7 @@ export default function ProvidersPage() {
 
     providers.forEach((provider) => {
       provider.services.forEach((service) => {
-        if (
-          categoryFilter &&
-          service.categoryName !== categoryFilter
-        ) {
+        if (categoryFilter && service.categoryName !== categoryFilter) {
           return;
         }
 
@@ -275,10 +306,8 @@ export default function ProvidersPage() {
     const names = new Set<string>();
 
     providers.forEach((provider) => {
-      const city = provider.city?.trim();
-
-      if (city) {
-        names.add(city);
+      if (provider.city) {
+        names.add(provider.city);
       }
     });
 
@@ -286,25 +315,13 @@ export default function ProvidersPage() {
   }, [providers]);
 
   const hasActiveFilters =
-    searchQuery.trim() !== "" ||
     categoryFilter !== "" ||
     serviceFilter !== "" ||
     cityFilter !== "" ||
     workModeFilter !== "all";
 
   const filteredProviders = useMemo(() => {
-    const search = searchQuery.trim().toLocaleLowerCase("tr-TR");
-
     return providers.filter((provider) => {
-      if (
-        search &&
-        !provider.fullName
-          .toLocaleLowerCase("tr-TR")
-          .includes(search)
-      ) {
-        return false;
-      }
-
       if (categoryFilter) {
         const hasCategory = provider.services.some(
           (service) => service.categoryName === categoryFilter,
@@ -325,7 +342,7 @@ export default function ProvidersPage() {
         }
       }
 
-      if (cityFilter && provider.city?.trim() !== cityFilter) {
+      if (cityFilter && provider.city !== cityFilter) {
         return false;
       }
 
@@ -338,7 +355,7 @@ export default function ProvidersPage() {
       }
 
       if (
-        workModeFilter === "both" &&
+        workModeFilter === "hybrid" &&
         !(provider.canWorkRemote && provider.canWorkOnSite)
       ) {
         return false;
@@ -348,7 +365,6 @@ export default function ProvidersPage() {
     });
   }, [
     providers,
-    searchQuery,
     categoryFilter,
     serviceFilter,
     cityFilter,
@@ -356,262 +372,260 @@ export default function ProvidersPage() {
   ]);
 
   function clearFilters() {
-    setSearchQuery("");
     setCategoryFilter("");
     setServiceFilter("");
     setCityFilter("");
     setWorkModeFilter("all");
   }
 
-  if (loading) {
-    return (
-      <main className="mx-auto max-w-6xl px-6 py-12">
-        <p className="text-sm text-zinc-500">Uzmanlar yükleniyor...</p>
-      </main>
-    );
-  }
-
   return (
-    <main className="mx-auto max-w-6xl px-6 py-12">
-      <div className="mb-10">
-        <p className="text-sm font-medium text-zinc-500">
-          Proje Sahibi Paneli
-        </p>
-
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight">
-          Uzmanlar
-        </h1>
-
-        <p className="mt-2 text-zinc-500">
-          İhtiyacın olan hizmeti sunan uzmanları keşfet. Profillerini
-          inceleyip doğrudan proje oluşturabilirsin.
-        </p>
-      </div>
-
-      {error && (
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
-          <p className="text-sm text-red-700">{error}</p>
-          <button
-            type="button"
-            onClick={() => {
-              void loadProviders();
-            }}
-            className="text-sm font-medium text-red-800 underline-offset-2 hover:underline"
-          >
-            Tekrar dene
-          </button>
-        </div>
-      )}
-
-      {providers.length > 0 && (
-        <div className="mb-8 rounded-2xl border border-zinc-200 bg-white p-4 sm:p-5">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-zinc-700">Arama</span>
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Uzman adı"
-                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
-              />
-            </label>
-
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-zinc-700">
-                Kategori
-              </span>
-              <select
-                value={categoryFilter}
-                onChange={(event) => {
-                  setCategoryFilter(event.target.value);
-                  setServiceFilter("");
-                }}
-                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
-              >
-                <option value="">Tümü</option>
-                {categories.map((category) => (
-                  <option key={category} value={category}>
-                    {category}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-zinc-700">Hizmet</span>
-              <select
-                value={serviceFilter}
-                onChange={(event) =>
-                  setServiceFilter(event.target.value)
-                }
-                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
-              >
-                <option value="">Tümü</option>
-                {services.map((service) => (
-                  <option key={service.id} value={String(service.id)}>
-                    {service.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-zinc-700">Şehir</span>
-              <select
-                value={cityFilter}
-                onChange={(event) => setCityFilter(event.target.value)}
-                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
-              >
-                <option value="">Tümü</option>
-                {cities.map((city) => (
-                  <option key={city} value={city}>
-                    {city}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div className="mt-4">
-            <p className="mb-2 text-sm font-medium text-zinc-700">
-              Çalışma şekli
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {(
-                [
-                  ["all", "Tümü"],
-                  ["remote", "Uzaktan"],
-                  ["on_site", "Yerinde"],
-                  ["both", "Her ikisi"],
-                ] as const
-              ).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setWorkModeFilter(value)}
-                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
-                    workModeFilter === value
-                      ? "border-zinc-900 bg-zinc-900 text-white"
-                      : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <p className="text-sm text-zinc-500">
-              {filteredProviders.length} / {providers.length} uzman
-            </p>
-
-            {hasActiveFilters && (
-              <button
-                type="button"
-                onClick={clearFilters}
-                className="rounded-lg border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
-              >
-                Filtreleri temizle
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {providers.length === 0 && !error ? (
-        <div className="rounded-2xl border border-dashed border-zinc-300 p-12 text-center">
-          <h2 className="text-lg font-medium">
-            Şu anda listelenecek uzman yok.
-          </h2>
-
-          <p className="mt-2 text-sm text-zinc-500">
-            Uzman profilleri oluştukça burada görünecek.
+    <main className="min-h-screen">
+      <section className="mx-auto max-w-6xl px-6 py-12">
+        <div className="mb-10 max-w-3xl">
+          <h1 className="text-3xl font-semibold tracking-tight text-zinc-950">
+            Uzmanları Keşfet
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-zinc-500 sm:text-base">
+            İhtiyacın için doğru uzmanı bul, çalışmalarını incele ve birlikte
+            çalışmaya başla.
           </p>
         </div>
-      ) : filteredProviders.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-zinc-300 p-12 text-center">
-          <h2 className="text-lg font-medium">
-            Bu filtrelere uyan uzman yok.
-          </h2>
 
-          <p className="mt-2 text-sm text-zinc-500">
-            Arama veya filtreleri değiştirerek tekrar dene.
-          </p>
-
-          <button
-            type="button"
-            onClick={clearFilters}
-            className="mt-5 rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
-          >
-            Filtreleri temizle
-          </button>
-        </div>
-      ) : (
-        <div className="grid gap-5">
-          {filteredProviders.map((provider) => (
-            <article
-              key={provider.id}
-              className="rounded-2xl border border-zinc-200 bg-white p-6"
+        {error ? (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+            <p className="text-sm text-red-700">{error}</p>
+            <button
+              type="button"
+              onClick={() => {
+                void loadProviders();
+              }}
+              className="text-sm font-medium text-red-800 underline-offset-2 hover:underline"
             >
-              <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0">
-                  <h2 className="text-xl font-semibold text-zinc-950">
-                    {provider.fullName}
-                  </h2>
+              Tekrar dene
+            </button>
+          </div>
+        ) : null}
 
-                  <p className="mt-2 text-sm text-zinc-500">
-                    {provider.city || "Şehir belirtilmemiş"}
-                    {" · "}
-                    {provider.experienceYears} yıl deneyim
-                    {" · "}
-                    {getWorkLabel(provider)}
+        {loading ? (
+          <p className="text-sm text-zinc-500">Uzmanlar yükleniyor...</p>
+        ) : (
+          <>
+            <div className="mb-8 rounded-2xl border border-zinc-200 bg-white p-4 sm:p-5">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <label className="flex flex-col gap-1.5 text-sm">
+                  <span className="font-medium text-zinc-700">Kategori</span>
+                  <select
+                    value={categoryFilter}
+                    onChange={(event) => {
+                      setCategoryFilter(event.target.value);
+                      setServiceFilter("");
+                    }}
+                    className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+                  >
+                    <option value="">Tümü</option>
+                    {categories.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1.5 text-sm">
+                  <span className="font-medium text-zinc-700">Hizmet</span>
+                  <select
+                    value={serviceFilter}
+                    onChange={(event) =>
+                      setServiceFilter(event.target.value)
+                    }
+                    className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+                  >
+                    <option value="">Tümü</option>
+                    {services.map((service) => (
+                      <option key={service.id} value={String(service.id)}>
+                        {service.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1.5 text-sm">
+                  <span className="font-medium text-zinc-700">Şehir</span>
+                  <select
+                    value={cityFilter}
+                    onChange={(event) => setCityFilter(event.target.value)}
+                    className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
+                  >
+                    <option value="">Tümü</option>
+                    {cities.map((city) => (
+                      <option key={city} value={city}>
+                        {city}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div>
+                  <p className="mb-1.5 text-sm font-medium text-zinc-700">
+                    Çalışma şekli
                   </p>
-
-                  <p className="mt-1 text-sm text-zinc-500">
-                    {provider.reviewCount > 0 && provider.reviewAverage
-                      ? `★ ${provider.reviewAverage} · ${provider.reviewCount} değerlendirme`
-                      : "Henüz değerlendirme yok"}
-                  </p>
-
-                  {provider.services.length > 0 && (
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {provider.services.slice(0, 6).map((service) => (
-                        <span
-                          key={`${provider.id}-${service.id}`}
-                          className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700"
-                        >
-                          {service.name}
-                        </span>
-                      ))}
-
-                      {provider.services.length > 6 && (
-                        <span className="rounded-full bg-zinc-50 px-3 py-1 text-xs font-medium text-zinc-500">
-                          +{provider.services.length - 6}
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  <p className="mt-4 text-sm text-zinc-500">
-                    {provider.workSampleCount > 0
-                      ? `${provider.workSampleCount} portfolyo çalışması`
-                      : "Henüz portfolyo çalışması yok"}
-                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {(
+                      [
+                        ["all", "Tümü"],
+                        ["remote", "Uzaktan"],
+                        ["on_site", "Yerinde"],
+                        ["hybrid", "Hibrit"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setWorkModeFilter(value)}
+                        className={`rounded-lg border px-3 py-2 text-xs font-medium transition sm:text-sm ${
+                          workModeFilter === value
+                            ? "border-zinc-900 bg-zinc-900 text-white"
+                            : "border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-
-                <Link
-                  href={`/providers/${provider.id}`}
-                  className="inline-flex shrink-0 rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800"
-                >
-                  Profili Gör
-                </Link>
               </div>
-            </article>
-          ))}
-        </div>
-      )}
+
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <p className="text-sm text-zinc-500">
+                  {filteredProviders.length} uzman
+                </p>
+
+                {hasActiveFilters ? (
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="text-sm font-medium text-zinc-700 underline-offset-2 hover:underline"
+                  >
+                    Filtreleri Temizle
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            {filteredProviders.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-zinc-300 p-12 text-center">
+                <p className="text-sm text-zinc-500">
+                  Bu kriterlere uygun uzman bulunamadı.
+                </p>
+                {hasActiveFilters ? (
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="mt-4 text-sm font-medium text-zinc-800 underline-offset-2 hover:underline"
+                  >
+                    Filtreleri Temizle
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                {filteredProviders.map((provider) => {
+                  const bio = excerpt(provider.bio);
+                  const labels = Array.from(
+                    new Set([
+                      ...provider.services.map((item) => item.categoryName),
+                      ...provider.services.map((item) => item.name),
+                    ]),
+                  ).slice(0, 5);
+
+                  return (
+                    <article
+                      key={provider.id}
+                      className="flex flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white"
+                    >
+                      <div className="grid grid-cols-3 gap-px bg-zinc-200">
+                        {Array.from({ length: 3 }).map((_, index) => {
+                          const sample = provider.portfolio[index];
+
+                          return (
+                            <div
+                              key={`${provider.id}-sample-${index}`}
+                              className="relative aspect-[4/3] bg-zinc-100"
+                            >
+                              {sample?.imageUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={sample.imageUrl}
+                                  alt={sample.title}
+                                  className="h-full w-full object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-full items-end p-2">
+                                  <p className="line-clamp-2 text-[11px] font-medium leading-4 text-zinc-500">
+                                    {sample?.title ?? "Portfolyo"}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="flex flex-1 flex-col p-5">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-xs font-semibold text-zinc-700">
+                            {getInitials(provider.fullName)}
+                          </div>
+                          <div className="min-w-0">
+                            <h2 className="truncate text-base font-semibold text-zinc-950">
+                              {provider.fullName}
+                            </h2>
+                            <p className="mt-0.5 text-xs text-zinc-500">
+                              {[provider.city, getWorkLabel(provider)]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </p>
+                          </div>
+                        </div>
+
+                        {bio ? (
+                          <p className="mt-3 text-sm leading-6 text-zinc-600">
+                            {bio}
+                          </p>
+                        ) : (
+                          <p className="mt-3 text-sm text-zinc-400">
+                            Henüz bio eklenmemiş.
+                          </p>
+                        )}
+
+                        {labels.length > 0 ? (
+                          <div className="mt-3 flex flex-wrap gap-1.5">
+                            {labels.map((label) => (
+                              <span
+                                key={`${provider.id}-${label}`}
+                                className="rounded-full bg-zinc-100 px-2.5 py-1 text-[11px] font-medium text-zinc-700"
+                              >
+                                {label}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        <Link
+                          href={`/providers/${provider.id}`}
+                          className="mt-5 inline-flex w-full items-center justify-center rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-zinc-800"
+                        >
+                          Profili Gör
+                        </Link>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </section>
     </main>
   );
 }
