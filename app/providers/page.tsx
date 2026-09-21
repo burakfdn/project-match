@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/client";
 import { getPreviewUser } from "@/lib/preview";
@@ -14,6 +15,13 @@ type PortfolioPreview = {
   imageUrl: string | null;
 };
 
+type ProviderService = {
+  service_id: number;
+  name: string;
+  category_id: number | null;
+  categoryName: string;
+};
+
 type ProviderCard = {
   id: string;
   fullName: string;
@@ -21,11 +29,7 @@ type ProviderCard = {
   city: string | null;
   canWorkRemote: boolean;
   canWorkOnSite: boolean;
-  services: {
-    id: number;
-    name: string;
-    categoryName: string;
-  }[];
+  services: ProviderService[];
   portfolio: PortfolioPreview[];
 };
 
@@ -38,11 +42,11 @@ type ProfileRow = {
   bio: string | null;
 };
 
-type ServiceRow = {
-  provider_id: string;
-  service_id: number;
-  service_name: string;
-  category_name: string | null;
+type CatalogService = {
+  id: number;
+  name: string;
+  category_id: number | null;
+  categoryName: string | null;
 };
 
 type WorkSampleRow = {
@@ -51,6 +55,29 @@ type WorkSampleRow = {
   title: string | null;
   project_url: string | null;
 };
+
+function asPositiveInt(value: unknown): number | null {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function readProviderId(row: Record<string, unknown>) {
+  const raw = row.provider_id ?? row.user_id ?? row.providerId;
+  return raw == null ? "" : String(raw);
+}
+
+function readServiceId(row: Record<string, unknown>) {
+  return asPositiveInt(row.service_id ?? row.serviceId);
+}
+
+function readCategoryId(row: Record<string, unknown>) {
+  return asPositiveInt(row.category_id ?? row.categoryId);
+}
 
 function getWorkLabel(provider: ProviderCard) {
   if (provider.canWorkRemote && provider.canWorkOnSite) {
@@ -121,6 +148,10 @@ function profileScore(provider: ProviderCard) {
 }
 
 export default function ProvidersPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
   const [providers, setProviders] = useState<ProviderCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -129,10 +160,53 @@ export default function ProvidersPage() {
   const [cityFilter, setCityFilter] = useState("");
   const [workModeFilter, setWorkModeFilter] =
     useState<WorkModeFilter>("all");
+  const [filtersReady, setFiltersReady] = useState(false);
+
+  useEffect(() => {
+    const serviceParam = searchParams.get("service")?.trim() ?? "";
+    const categoryParam = searchParams.get("category")?.trim() ?? "";
+
+    setServiceFilter(serviceParam);
+    setCategoryFilter(categoryParam);
+    setFiltersReady(true);
+  }, [searchParams]);
 
   useEffect(() => {
     void loadProviders();
   }, []);
+
+  function syncFilterUrl(nextCategory: string, nextService: string) {
+    const params = new URLSearchParams();
+
+    if (nextCategory) {
+      params.set("category", nextCategory);
+    }
+
+    if (nextService) {
+      params.set("service", nextService);
+    }
+
+    const nextQuery = params.toString();
+    const currentQuery = new URLSearchParams();
+    const currentCategory = searchParams.get("category")?.trim() ?? "";
+    const currentService = searchParams.get("service")?.trim() ?? "";
+
+    if (currentCategory) {
+      currentQuery.set("category", currentCategory);
+    }
+
+    if (currentService) {
+      currentQuery.set("service", currentService);
+    }
+
+    if (currentQuery.toString() === nextQuery) {
+      return;
+    }
+
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, {
+      scroll: false,
+    });
+  }
 
   async function loadProviders() {
     const supabase = createClient();
@@ -154,9 +228,20 @@ export default function ProvidersPage() {
     const previewUser = getPreviewUser();
     const viewerId = previewUser?.id ?? user.id;
 
-    const [profilesResult, servicesResult] = await Promise.all([
+    const [profilesResult, servicesResult, catalogResult] = await Promise.all([
       supabase.rpc("discover_providers"),
       supabase.rpc("discover_provider_services"),
+      supabase.from("services").select(
+        `
+          id,
+          name,
+          category_id,
+          category:categories (
+            id,
+            name
+          )
+        `,
+      ),
     ]);
 
     if (profilesResult.error) {
@@ -217,19 +302,86 @@ export default function ProvidersPage() {
       }
     }
 
-    const serviceRows = (servicesResult.data ?? []) as ServiceRow[];
+    const catalogById = new Map<number, CatalogService>();
+
+    if (!catalogResult.error) {
+      for (const row of (catalogResult.data ?? []) as Array<{
+        id: number;
+        name: string | null;
+        category_id: number | null;
+        category?:
+          | { id?: number; name?: string | null }
+          | Array<{ id?: number; name?: string | null }>
+          | null;
+      }>) {
+        const id = asPositiveInt(row.id);
+
+        if (!id) {
+          continue;
+        }
+
+        const nestedCategory = Array.isArray(row.category)
+          ? row.category[0]
+          : row.category;
+
+        catalogById.set(id, {
+          id,
+          name: row.name?.trim() || "Hizmet",
+          category_id: asPositiveInt(row.category_id ?? nestedCategory?.id),
+          categoryName: nestedCategory?.name?.trim() || null,
+        });
+      }
+    } else {
+      console.error("services catalog error:", catalogResult.error);
+    }
+
+    const serviceRows = (
+      Array.isArray(servicesResult.data)
+        ? servicesResult.data
+        : servicesResult.data
+          ? [servicesResult.data]
+          : []
+    ) as Array<Record<string, unknown>>;
     const servicesByProvider: Record<string, ProviderCard["services"]> =
       {};
 
-    for (const service of serviceRows) {
-      if (!servicesByProvider[service.provider_id]) {
-        servicesByProvider[service.provider_id] = [];
+    for (const row of serviceRows) {
+      const providerId = readProviderId(row).trim().toLowerCase();
+      const serviceId = readServiceId(row);
+
+      if (!providerId || !serviceId) {
+        continue;
       }
 
-      servicesByProvider[service.provider_id].push({
-        id: service.service_id,
-        name: service.service_name,
-        categoryName: service.category_name?.trim() || "Diğer",
+      const catalog = catalogById.get(serviceId);
+      const categoryId =
+        readCategoryId(row) ?? catalog?.category_id ?? null;
+      const serviceName =
+        (typeof row.service_name === "string" && row.service_name.trim()
+          ? row.service_name.trim()
+          : catalog?.name) || "Hizmet";
+      const categoryName =
+        (typeof row.category_name === "string" && row.category_name.trim()
+          ? row.category_name.trim()
+          : catalog?.categoryName) || "Diğer";
+
+      if (!servicesByProvider[providerId]) {
+        servicesByProvider[providerId] = [];
+      }
+
+      if (
+        servicesByProvider[providerId].some(
+          (item) => item.service_id === serviceId,
+        )
+      ) {
+        continue;
+      }
+
+      servicesByProvider[providerId].push({
+        service_id: serviceId,
+        name: serviceName,
+        category_id: categoryId,
+        categoryName,
       });
     }
 
@@ -248,7 +400,7 @@ export default function ProvidersPage() {
           city: row.city?.trim() || null,
           canWorkRemote: Boolean(row.can_work_remote),
           canWorkOnSite: Boolean(row.can_work_on_site),
-          services: servicesByProvider[id] ?? [],
+          services: servicesByProvider[id.trim().toLowerCase()] ?? [],
           portfolio: samplesByProvider[id] ?? [],
         };
       })
@@ -268,30 +420,36 @@ export default function ProvidersPage() {
   }
 
   const categories = useMemo(() => {
-    const names = new Set<string>();
+    const map = new Map<number, string>();
 
     providers.forEach((provider) => {
       provider.services.forEach((service) => {
-        if (service.categoryName) {
-          names.add(service.categoryName);
+        if (service.category_id) {
+          map.set(service.category_id, service.categoryName);
         }
       });
     });
 
-    return [...names].sort((a, b) => a.localeCompare(b, "tr"));
+    return [...map.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, "tr"));
   }, [providers]);
 
   const services = useMemo(() => {
-    const map = new Map<number, { id: number; name: string }>();
+    const selectedCategoryId = asPositiveInt(categoryFilter);
+    const map = new Map<number, { service_id: number; name: string }>();
 
     providers.forEach((provider) => {
       provider.services.forEach((service) => {
-        if (categoryFilter && service.categoryName !== categoryFilter) {
+        if (
+          selectedCategoryId &&
+          Number(service.category_id) !== selectedCategoryId
+        ) {
           return;
         }
 
-        map.set(service.id, {
-          id: service.id,
+        map.set(service.service_id, {
+          service_id: service.service_id,
           name: service.name,
         });
       });
@@ -321,10 +479,13 @@ export default function ProvidersPage() {
     workModeFilter !== "all";
 
   const filteredProviders = useMemo(() => {
+    const selectedCategoryId = asPositiveInt(categoryFilter);
+    const selectedServiceId = asPositiveInt(serviceFilter);
+
     return providers.filter((provider) => {
-      if (categoryFilter) {
+      if (selectedCategoryId) {
         const hasCategory = provider.services.some(
-          (service) => service.categoryName === categoryFilter,
+          (service) => Number(service.category_id) === selectedCategoryId,
         );
 
         if (!hasCategory) {
@@ -333,9 +494,24 @@ export default function ProvidersPage() {
       }
 
       if (serviceFilter) {
-        const hasService = provider.services.some(
-          (service) => String(service.id) === serviceFilter,
-        );
+        if (!selectedServiceId) {
+          return false;
+        }
+
+        const hasService = provider.services.some((service) => {
+          const serviceMatches =
+            Number(service.service_id) === selectedServiceId;
+
+          if (!serviceMatches) {
+            return false;
+          }
+
+          if (!selectedCategoryId) {
+            return true;
+          }
+
+          return Number(service.category_id) === selectedCategoryId;
+        });
 
         if (!hasService) {
           return false;
@@ -371,11 +547,43 @@ export default function ProvidersPage() {
     workModeFilter,
   ]);
 
+  function updateCategoryFilter(nextCategory: string) {
+    const selectedCategoryId = asPositiveInt(nextCategory);
+    const selectedServiceId = asPositiveInt(serviceFilter);
+    let nextService = serviceFilter;
+
+    if (selectedCategoryId && selectedServiceId) {
+      const stillValid = providers.some((provider) =>
+        provider.services.some(
+          (service) =>
+            Number(service.service_id) === selectedServiceId &&
+            Number(service.category_id) === selectedCategoryId,
+        ),
+      );
+
+      if (!stillValid) {
+        nextService = "";
+      }
+    } else if (selectedCategoryId) {
+      nextService = "";
+    }
+
+    setCategoryFilter(nextCategory);
+    setServiceFilter(nextService);
+    syncFilterUrl(nextCategory, nextService);
+  }
+
+  function updateServiceFilter(nextService: string) {
+    setServiceFilter(nextService);
+    syncFilterUrl(categoryFilter, nextService);
+  }
+
   function clearFilters() {
     setCategoryFilter("");
     setServiceFilter("");
     setCityFilter("");
     setWorkModeFilter("all");
+    syncFilterUrl("", "");
   }
 
   return (
@@ -406,7 +614,7 @@ export default function ProvidersPage() {
           </div>
         ) : null}
 
-        {loading ? (
+        {loading || !filtersReady ? (
           <p className="text-sm text-zinc-500">Uzmanlar yükleniyor...</p>
         ) : (
           <>
@@ -417,15 +625,14 @@ export default function ProvidersPage() {
                   <select
                     value={categoryFilter}
                     onChange={(event) => {
-                      setCategoryFilter(event.target.value);
-                      setServiceFilter("");
+                      updateCategoryFilter(event.target.value);
                     }}
                     className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
                   >
                     <option value="">Tümü</option>
                     {categories.map((category) => (
-                      <option key={category} value={category}>
-                        {category}
+                      <option key={category.id} value={String(category.id)}>
+                        {category.name}
                       </option>
                     ))}
                   </select>
@@ -436,13 +643,16 @@ export default function ProvidersPage() {
                   <select
                     value={serviceFilter}
                     onChange={(event) =>
-                      setServiceFilter(event.target.value)
+                      updateServiceFilter(event.target.value)
                     }
                     className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
                   >
                     <option value="">Tümü</option>
                     {services.map((service) => (
-                      <option key={service.id} value={String(service.id)}>
+                      <option
+                        key={service.service_id}
+                        value={String(service.service_id)}
+                      >
                         {service.name}
                       </option>
                     ))}
