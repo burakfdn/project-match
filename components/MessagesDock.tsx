@@ -126,8 +126,8 @@ function normalizeConversations(data: unknown): DockConversation[] {
 }
 
 function formatUnreadCount(count: number) {
-  if (count > 9) {
-    return "9+";
+  if (count > 99) {
+    return "99+";
   }
 
   return String(count);
@@ -171,6 +171,10 @@ function PersonAvatar({
 
 export const OPEN_MESSAGES_DOCK_EVENT =
   "project-match-open-conversation";
+export const OPEN_MESSAGES_LIST_EVENT =
+  "project-match-open-messages";
+export const MESSAGES_UNREAD_CHANGE_EVENT =
+  "project-match-messages-unread";
 
 export function openMessagesDockConversation(
   conversationId: number,
@@ -181,6 +185,14 @@ export function openMessagesDockConversation(
       detail: { conversationId, jobId },
     }),
   );
+}
+
+export function openMessagesDock() {
+  window.dispatchEvent(new Event(OPEN_MESSAGES_LIST_EVENT));
+}
+
+export function notifyMessagesUnreadChange() {
+  window.dispatchEvent(new Event(MESSAGES_UNREAD_CHANGE_EVENT));
 }
 
 export default function MessagesDock() {
@@ -233,6 +245,9 @@ export default function MessagesDock() {
     "none",
   );
   const [hasUnseenIncoming, setHasUnseenIncoming] = useState(false);
+  const [menuConversationId, setMenuConversationId] = useState<
+    number | null
+  >(null);
 
   useEffect(() => {
     currentUserIdRef.current = currentUserId;
@@ -327,10 +342,22 @@ export default function MessagesDock() {
       handleOpenConversationEvent,
     );
 
+    function handleOpenListEvent() {
+      setOpen(true);
+      setSelected(null);
+      setMenuConversationId(null);
+    }
+
+    window.addEventListener(OPEN_MESSAGES_LIST_EVENT, handleOpenListEvent);
+
     return () => {
       window.removeEventListener(
         OPEN_MESSAGES_DOCK_EVENT,
         handleOpenConversationEvent,
+      );
+      window.removeEventListener(
+        OPEN_MESSAGES_LIST_EVENT,
+        handleOpenListEvent,
       );
     };
   }, []);
@@ -359,6 +386,7 @@ export default function MessagesDock() {
 
     const next = normalizeConversations(data);
     setConversations(next);
+    notifyMessagesUnreadChange();
     return next;
   }
 
@@ -378,6 +406,7 @@ export default function MessagesDock() {
 
     setConversations(normalizeConversations(data));
     setListLoading(false);
+    notifyMessagesUnreadChange();
   }
 
   async function loadMessages(conversationId: number) {
@@ -428,7 +457,22 @@ export default function MessagesDock() {
           : conversation,
       ),
     );
+    notifyMessagesUnreadChange();
 
+    return true;
+  }
+
+  async function markConversationUnread(conversationId: number) {
+    const { error } = await supabase.rpc("mark_conversation_unread", {
+      p_conversation_id: conversationId,
+    });
+
+    if (error) {
+      return false;
+    }
+
+    await fetchConversations();
+    setMenuConversationId(null);
     return true;
   }
 
@@ -534,10 +578,11 @@ export default function MessagesDock() {
               last_message_at: incoming.created_at,
               unread_count: (conversation.unread_count ?? 0) + 1,
             }
-          : conversation,
+            : conversation,
       );
     });
 
+    notifyMessagesUnreadChange();
     void showIncomingPreview(incoming);
   };
 
@@ -753,6 +798,7 @@ export default function MessagesDock() {
     setHasAccess(null);
     setStartedFromJobId(null);
     setHasUnseenIncoming(false);
+    setMenuConversationId(null);
     pendingThreadScrollRef.current = "none";
   }
 
@@ -764,6 +810,7 @@ export default function MessagesDock() {
     setHasAccess(null);
     setStartedFromJobId(null);
     setHasUnseenIncoming(false);
+    setMenuConversationId(null);
     pendingThreadScrollRef.current = "none";
   }
 
@@ -1053,37 +1100,120 @@ export default function MessagesDock() {
                 ) : (
                   conversations.map((conversation) => {
                     const unreadCount = conversation.unread_count ?? 0;
+                    const isUnread = unreadCount > 0;
+                    const conversationId = Number(
+                      conversation.conversation_id,
+                    );
+                    const menuOpen = menuConversationId === conversationId;
 
                     return (
-                      <button
+                      <div
                         key={conversation.conversation_id}
-                        type="button"
-                        onClick={() => openConversation(conversation)}
-                        className="flex w-full items-center justify-between gap-3 border-t border-zinc-100 px-4 py-2.5 text-left first:border-t-0 hover:bg-zinc-50"
+                        className={`relative flex items-stretch border-t border-zinc-100 first:border-t-0 ${
+                          isUnread ? "bg-zinc-50" : "bg-white"
+                        }`}
                       >
-                        <div className="flex min-w-0 items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMenuConversationId(null);
+                            void openConversation(conversation);
+                          }}
+                          className="flex min-w-0 flex-1 items-start gap-3 px-4 py-3 text-left hover:bg-zinc-50"
+                        >
                           <PersonAvatar
                             name={conversation.other_user_name}
                           />
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-zinc-900">
-                              {conversation.other_user_name?.trim() ||
-                                "Kullanıcı"}
-                            </p>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start justify-between gap-2">
+                              <p
+                                className={`truncate text-sm ${
+                                  isUnread
+                                    ? "font-semibold text-zinc-950"
+                                    : "font-medium text-zinc-900"
+                                }`}
+                              >
+                                {conversation.other_user_name?.trim() ||
+                                  "Kullanıcı"}
+                              </p>
+                              {conversation.last_message_at ? (
+                                <p className="shrink-0 text-[11px] text-zinc-400">
+                                  {formatMessageTime(
+                                    conversation.last_message_at,
+                                  )}
+                                </p>
+                              ) : null}
+                            </div>
                             {conversation.job_title?.trim() ? (
                               <p className="mt-0.5 truncate text-[11px] leading-4 text-zinc-400">
                                 {conversation.job_title.trim()}
                               </p>
                             ) : null}
+                            <p
+                              className={`mt-1 truncate text-xs ${
+                                isUnread
+                                  ? "font-medium text-zinc-700"
+                                  : "text-zinc-500"
+                              }`}
+                            >
+                              {excerptText(
+                                conversation.last_message?.trim() ||
+                                  "Henüz mesaj yok.",
+                              )}
+                            </p>
                           </div>
-                        </div>
+                          {isUnread ? (
+                            <span className="mt-0.5 inline-flex h-[21px] min-w-[21px] shrink-0 items-center justify-center rounded-full bg-zinc-900 px-2 text-[11px] font-medium leading-none text-white">
+                              {formatUnreadCount(unreadCount)}
+                            </span>
+                          ) : null}
+                        </button>
 
-                        {unreadCount > 0 ? (
-                          <span className="inline-flex h-[21px] min-w-[21px] shrink-0 items-center justify-center rounded-full bg-rose-50 px-2 text-[11px] font-medium leading-none text-rose-700">
-                            {formatUnreadCount(unreadCount)}
-                          </span>
-                        ) : null}
-                      </button>
+                        <div className="relative shrink-0 pr-2 pt-2">
+                          <button
+                            type="button"
+                            aria-label="Konuşma seçenekleri"
+                            aria-haspopup="menu"
+                            aria-expanded={menuOpen}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setMenuConversationId(
+                                menuOpen ? null : conversationId,
+                              );
+                            }}
+                            className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-zinc-800"
+                          >
+                            ⋯
+                          </button>
+                          {menuOpen ? (
+                            <div
+                              role="menu"
+                              className="absolute right-2 z-20 mt-1 w-52 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm"
+                            >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (isUnread) {
+                                    void markConversationRead(conversationId);
+                                    setMenuConversationId(null);
+                                  } else {
+                                    void markConversationUnread(
+                                      conversationId,
+                                    );
+                                  }
+                                }}
+                                className="w-full px-3 py-2.5 text-left text-sm text-zinc-800 hover:bg-zinc-50"
+                              >
+                                {isUnread
+                                  ? "Okundu olarak işaretle"
+                                  : "Okunmadı olarak işaretle"}
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
                     );
                   })
                 )}

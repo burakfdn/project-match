@@ -9,6 +9,7 @@ import {
   conversationJobHref,
   type ConversationJob,
 } from "@/components/ConversationProjectContext";
+import { notifyMessagesUnreadChange } from "@/components/MessagesDock";
 
 type ChatMessage = {
   id: number;
@@ -118,6 +119,11 @@ export default function ConversationPage() {
     ]);
 
     setConversationJobs(jobs);
+
+    await supabase.rpc("mark_conversation_read", {
+      p_conversation_id: Number(conversationId),
+    });
+    notifyMessagesUnreadChange();
 
     setLoading(false);
   }
