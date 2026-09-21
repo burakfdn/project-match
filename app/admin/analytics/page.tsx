@@ -295,19 +295,6 @@ export default function AdminAnalyticsPage() {
       setOverview(parseRpcJson<AnalyticsOverviewData>(overviewResult.data));
     }
 
-    if (analyticsResult.error) {
-      setError(
-        analyticsResult.error.message ||
-          "Analiz verileri yüklenirken bir hata oluştu.",
-      );
-      setAnalytics(null);
-      setPerformance(null);
-      setLoading(false);
-      return;
-    }
-
-    setAnalytics(parseRpcJson<AnalyticsData>(analyticsResult.data));
-
     if (performanceResult.error) {
       setPerformanceError(
         performanceResult.error.message ||
@@ -325,6 +312,18 @@ export default function AdminAnalyticsPage() {
         yearly: Array.isArray(parsed?.yearly) ? parsed.yearly : [],
       });
     }
+
+    if (analyticsResult.error) {
+      setError(
+        analyticsResult.error.message ||
+          "Analiz verileri yüklenirken bir hata oluştu.",
+      );
+      setAnalytics(null);
+      setLoading(false);
+      return;
+    }
+
+    setAnalytics(parseRpcJson<AnalyticsData>(analyticsResult.data));
 
     setLoading(false);
   }
@@ -511,8 +510,59 @@ export default function AdminAnalyticsPage() {
 
         {loading ? (
           <p className="text-sm text-zinc-500">Analiz verileri yükleniyor...</p>
-        ) : analytics ? (
+        ) : (
           <div className="space-y-10">
+            {overview ? (
+              <section>
+                <h2 className="text-lg font-semibold text-zinc-900">
+                  Kullanıcı özeti
+                </h2>
+                <p className="mt-1 text-sm text-zinc-500">
+                  Rol ve kayıt kırılımı.
+                </p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <MetricCard
+                    label="Toplam kullanıcı"
+                    value={overview.users?.total}
+                  />
+                  <MetricCard
+                    label="Aktif kullanıcı"
+                    value={overview.users?.active}
+                  />
+                  <MetricCard
+                    label="Yalnızca müşteri"
+                    value={overview.users?.customer_only}
+                  />
+                  <MetricCard
+                    label="Yalnızca uzman"
+                    value={overview.users?.provider_only}
+                  />
+                  <MetricCard
+                    label="Her iki rol"
+                    value={overview.users?.both_roles}
+                  />
+                  <MetricCard
+                    label="Admin"
+                    value={overview.users?.admin}
+                  />
+                  <MetricCard
+                    label="Bugün yeni"
+                    value={overview.users?.new_today}
+                  />
+                  <MetricCard
+                    label="Son 7 gün"
+                    value={overview.users?.new_7_days}
+                  />
+                  <MetricCard
+                    label="Son 30 gün"
+                    value={overview.users?.new_30_days}
+                  />
+                </div>
+              </section>
+            ) : null}
+
+            {analytics ? (
+              <>
             <section>
               <h2 className="text-lg font-semibold text-zinc-900">
                 Kullanıcılar
@@ -607,6 +657,8 @@ export default function AdminAnalyticsPage() {
                 />
               </div>
             </section>
+              </>
+            ) : null}
 
             {performanceError ? (
               <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -884,7 +936,7 @@ export default function AdminAnalyticsPage() {
               </>
             ) : null}
           </div>
-        ) : null}
+        )}
       </section>
     </main>
   );
