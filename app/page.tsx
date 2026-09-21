@@ -18,6 +18,7 @@ import {
 } from "@/lib/preview";
 import { RecommendedProviders } from "@/components/recommended-providers";
 import { RecommendedJobs } from "@/components/recommended-jobs";
+import { PopularServices } from "@/components/popular-services";
 
 type Mode = ActiveMode | null;
 
@@ -512,6 +513,7 @@ export default function HomePage() {
               </div>
 
               <RecommendedProviders />
+              <PopularServices />
             </>
           )}
 
