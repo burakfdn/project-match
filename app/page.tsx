@@ -20,6 +20,7 @@ import { RecommendedProviders } from "@/components/recommended-providers";
 import { RecommendedJobs } from "@/components/recommended-jobs";
 import { PopularServices } from "@/components/popular-services";
 import { RecentProviders } from "@/components/recent-providers";
+import { RecentJobs } from "@/components/recent-jobs";
 
 type Mode = ActiveMode | null;
 
@@ -516,6 +517,7 @@ export default function HomePage() {
               <RecommendedProviders />
               <PopularServices />
               <RecentProviders />
+              <RecentJobs />
             </>
           )}
 

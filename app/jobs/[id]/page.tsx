@@ -8,6 +8,7 @@ import { getPreviewUser } from "@/lib/preview";
 import { openMessagesDockConversation } from "@/components/MessagesDock";
 import { ProjectTimeline } from "@/components/ProjectTimeline";
 import { ensureCanonicalJobRoute, jobHref } from "@/lib/jobs/public-id";
+import { rememberRecentJob } from "@/components/recent-jobs";
 
 type Job = {
   id: number;
@@ -657,6 +658,23 @@ export default function JobDetailPage() {
     } else {
       setHasReview(false);
     }
+
+    rememberRecentJob(
+      {
+        id: normalizedJob.id,
+        publicId: normalizedJob.public_id,
+        title: normalizedJob.title,
+        description: normalizedJob.description?.trim() || null,
+        categoryName: normalizedJob.category_name?.trim() || null,
+        serviceName: normalizedJob.service_name?.trim() || null,
+        budget: normalizedJob.budget,
+        budgetMin: null,
+        budgetMax: null,
+        locationType: normalizedJob.location_type,
+        city: normalizedJob.city?.trim() || null,
+      },
+      user?.id ?? null,
+    );
 
     setLoading(false);
   }
