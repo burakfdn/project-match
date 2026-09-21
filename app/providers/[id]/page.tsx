@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/client";
+import { rememberRecentProvider } from "@/components/recent-providers";
 
 type ProviderProfile = {
   user_id: string;
@@ -411,6 +412,22 @@ export default function ProviderProfilePage() {
 
     setProfile(provider);
     setServices(normalizedServices);
+
+    const firstImage = (
+      Array.isArray(workSamplesData) ? workSamplesData : []
+    ).find((sample) => isImageUrl(sample.project_url));
+
+    rememberRecentProvider(
+      {
+        id: provider.user_id,
+        fullName: provider.full_name?.trim() || "İsimsiz Uzman",
+        bio: provider.bio?.trim() || null,
+        city: provider.city?.trim() || null,
+        workLabel: getWorkLabel(provider),
+        imageUrl: firstImage?.project_url?.trim() || null,
+      },
+      user?.id ?? null,
+    );
 
     const { data: reviewsData, error: reviewsError } = await supabase
       .from("reviews")
