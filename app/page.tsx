@@ -16,6 +16,7 @@ import {
   getPreviewUser,
   type PreviewUser,
 } from "@/lib/preview";
+import { RecommendedProviders } from "@/components/recommended-providers";
 
 type Mode = ActiveMode | null;
 
@@ -508,6 +509,8 @@ export default function HomePage() {
                   </span>
                 </Link>
               </div>
+
+              <RecommendedProviders />
             </>
           )}
 
