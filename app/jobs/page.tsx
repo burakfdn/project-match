@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { getPreviewUser } from "@/lib/preview";
 import { createClient } from "@/lib/supabase/client";
@@ -138,6 +138,38 @@ function parseBudgetInput(value: string) {
   return parsed;
 }
 
+function normalizeSearchText(value: string) {
+  return value
+    .toLocaleLowerCase("tr")
+    .replaceAll("ı", "i")
+    .replaceAll("ğ", "g")
+    .replaceAll("ü", "u")
+    .replaceAll("ş", "s")
+    .replaceAll("ö", "o")
+    .replaceAll("ç", "c");
+}
+
+function matchesSearchQuery(job: Job, query: string) {
+  const tokens = normalizeSearchText(query)
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (tokens.length === 0) {
+    return true;
+  }
+
+  const haystack = normalizeSearchText(
+    [
+      job.title,
+      job.description ?? "",
+      job.service?.name ?? "",
+      job.service?.category?.name ?? "",
+    ].join(" "),
+  );
+
+  return tokens.every((token) => haystack.includes(token));
+}
+
 function sameUuid(
   left: string | null | undefined,
   right: string | null | undefined,
@@ -230,6 +262,8 @@ function getProviderMatchReasons(
 
 export default function JobsPage() {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -238,7 +272,9 @@ export default function JobsPage() {
     Record<number, { price: number; status: string }>
   >({});
   const [isPreview, setIsPreview] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(
+    () => searchParams.get("q") ?? "",
+  );
   const [categoryFilter, setCategoryFilter] = useState("");
   const [serviceFilter, setServiceFilter] = useState("");
   const [locationFilter, setLocationFilter] =
@@ -491,6 +527,37 @@ export default function JobsPage() {
     loadJobs();
   }, []);
 
+  useEffect(() => {
+    setSearchQuery(searchParams.get("q") ?? "");
+  }, [searchParams]);
+
+  function syncSearchUrl(nextSearch: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    const trimmedSearch = nextSearch.trim();
+
+    if (trimmedSearch) {
+      params.set("q", trimmedSearch);
+    } else {
+      params.delete("q");
+    }
+
+    const nextQuery = params.toString();
+    const currentQuery = searchParams.toString();
+
+    if (currentQuery === nextQuery) {
+      return;
+    }
+
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, {
+      scroll: false,
+    });
+  }
+
+  function updateSearchQuery(nextSearch: string) {
+    setSearchQuery(nextSearch);
+    syncSearchUrl(nextSearch);
+  }
+
   const categories = useMemo(() => {
     const names = new Set<string>();
 
@@ -551,17 +618,11 @@ export default function JobsPage() {
     sort !== "newest";
 
   const filteredJobs = useMemo(() => {
-    const search = searchQuery.trim().toLocaleLowerCase("tr-TR");
     const minBudget = parseBudgetInput(budgetMin);
     const maxBudget = parseBudgetInput(budgetMax);
 
     const next = jobs.filter((job) => {
-      if (
-        search &&
-        !job.title
-          .toLocaleLowerCase("tr-TR")
-          .includes(search)
-      ) {
+      if (!matchesSearchQuery(job, searchQuery)) {
         return false;
       }
 
@@ -643,6 +704,7 @@ export default function JobsPage() {
     setBudgetMin("");
     setBudgetMax("");
     setSort("newest");
+    syncSearchUrl("");
   }
 
   if (loading) {
@@ -694,22 +756,20 @@ export default function JobsPage() {
 
       {jobs.length > 0 && (
         <div className="mb-8 rounded-2xl border border-zinc-200 bg-white p-4 sm:p-5">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <label className="flex flex-col gap-1.5 text-sm">
-              <span className="font-medium text-zinc-700">
-                Arama
-              </span>
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(event) =>
-                  setSearchQuery(event.target.value)
-                }
-                placeholder="İlan başlığı"
-                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400"
-              />
-            </label>
+          <label className="mb-4 flex flex-col gap-1.5 text-sm">
+            <span className="font-medium text-zinc-700">Ara</span>
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) =>
+                updateSearchQuery(event.target.value)
+              }
+              placeholder="İş, hizmet veya anahtar kelime ara"
+              className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2.5 text-base text-zinc-900 outline-none focus:border-zinc-400 sm:py-2 sm:text-sm"
+            />
+          </label>
 
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <label className="flex flex-col gap-1.5 text-sm">
               <span className="font-medium text-zinc-700">
                 Kategori
@@ -914,11 +974,15 @@ export default function JobsPage() {
       ) : !error && filteredJobs.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-zinc-300 p-12 text-center">
           <h2 className="text-lg font-medium">
-            Bu filtrelere uyan iş yok.
+            {searchQuery.trim()
+              ? "Aramana uygun iş bulunamadı."
+              : "Bu filtrelere uyan iş yok."}
           </h2>
 
           <p className="mt-2 text-sm text-zinc-500">
-            Arama veya filtreleri değiştirerek tekrar dene.
+            {searchQuery.trim()
+              ? "Farklı bir anahtar kelime veya filtre deneyebilirsin."
+              : "Arama veya filtreleri değiştirerek tekrar dene."}
           </p>
 
           <button
