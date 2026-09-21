@@ -14,6 +14,22 @@ type AnalyticsData = {
   support: AnalyticsGroup;
 };
 
+type AnalyticsOverviewUsers = {
+  total: number;
+  active: number;
+  customer_only: number;
+  provider_only: number;
+  both_roles: number;
+  admin: number;
+  new_today: number;
+  new_7_days: number;
+  new_30_days: number;
+};
+
+type AnalyticsOverviewData = {
+  users: AnalyticsOverviewUsers;
+};
+
 type CategoryRow = {
   category_id: number;
   category_name: string;
@@ -239,9 +255,11 @@ export default function AdminAnalyticsPage() {
   const supabase = createClient();
 
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [overview, setOverview] = useState<AnalyticsOverviewData | null>(null);
   const [performance, setPerformance] = useState<PerformanceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [overviewError, setOverviewError] = useState("");
   const [performanceError, setPerformanceError] = useState("");
   const [serviceSortKey, setServiceSortKey] =
     useState<ServiceSortKey>("job_count");
@@ -256,16 +274,30 @@ export default function AdminAnalyticsPage() {
   async function loadAnalytics() {
     setLoading(true);
     setError("");
+    setOverviewError("");
     setPerformanceError("");
 
-    const [overviewResult, performanceResult] = await Promise.all([
-      supabase.rpc("admin_get_analytics"),
-      supabase.rpc("admin_get_analytics_performance"),
-    ]);
+    const [analyticsResult, overviewResult, performanceResult] =
+      await Promise.all([
+        supabase.rpc("admin_get_analytics"),
+        supabase.rpc("admin_get_analytics_overview"),
+        supabase.rpc("admin_get_analytics_performance"),
+      ]);
 
     if (overviewResult.error) {
-      setError(
+      const message =
         overviewResult.error.message ||
+        "Kullanıcı özet verileri yüklenirken bir hata oluştu.";
+      console.error("admin_get_analytics_overview", overviewResult.error);
+      setOverviewError(message);
+      setOverview(null);
+    } else {
+      setOverview(parseRpcJson<AnalyticsOverviewData>(overviewResult.data));
+    }
+
+    if (analyticsResult.error) {
+      setError(
+        analyticsResult.error.message ||
           "Analiz verileri yüklenirken bir hata oluştu.",
       );
       setAnalytics(null);
@@ -274,7 +306,7 @@ export default function AdminAnalyticsPage() {
       return;
     }
 
-    setAnalytics(parseRpcJson<AnalyticsData>(overviewResult.data));
+    setAnalytics(parseRpcJson<AnalyticsData>(analyticsResult.data));
 
     if (performanceResult.error) {
       setPerformanceError(
@@ -468,6 +500,12 @@ export default function AdminAnalyticsPage() {
         {error ? (
           <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
+          </div>
+        ) : null}
+
+        {overviewError ? (
+          <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {overviewError}
           </div>
         ) : null}
 
