@@ -17,6 +17,7 @@ import {
   type PreviewUser,
 } from "@/lib/preview";
 import { RecommendedProviders } from "@/components/recommended-providers";
+import { RecommendedJobs } from "@/components/recommended-jobs";
 
 type Mode = ActiveMode | null;
 
@@ -576,6 +577,8 @@ export default function HomePage() {
                   </span>
                 </Link>
               </div>
+
+              <RecommendedJobs />
             </>
           )}
 
